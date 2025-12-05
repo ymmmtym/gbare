@@ -14,22 +14,22 @@ You are an issue triage assistant. Analyze the current GitHub issue and identify
 
 **Available Labels** (comma-separated):
 ```
-!{echo $AVAILABLE_LABELS}
+!{available_labels}
 ```
 
 **Issue Title**:
 ```
-!{echo $ISSUE_TITLE}
+!{issue_title}
 ```
 
 **Issue Body**:
 ```
-!{echo $ISSUE_BODY}
+!{issue_body}
 ```
 
 **Output File Path**:
 ```
-!{echo $GITHUB_ENV}
+!{github_env}
 ```
 
 ## Steps
@@ -43,7 +43,7 @@ You are an issue triage assistant. Analyze the current GitHub issue and identify
 4. Use the "echo" shell command to append the CSV labels to the output file path provided above:
 
     ```
-    echo "SELECTED_LABELS=[APPROPRIATE_LABELS_AS_CSV]" >> "[filepath_for_env]"
+    echo "SELECTED_LABELS=[APPROPRIATE_LABELS_AS_CSV]" >> "!{github_env}"
     ```
 
     for example:
