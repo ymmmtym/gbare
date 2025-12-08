@@ -1,0 +1,88 @@
+name: Tests
+
+on:
+  push:
+    branches: [ main, develop, feature/* ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v6
+    
+    - name: Setup zsh
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y zsh
+    
+    - name: Run unit tests
+      shell: zsh {0}
+      run: |
+        ./tests/run_tests.zsh
+    
+    - name: Test summary
+      if: always()
+      run: |
+        echo "Unit tests completed"
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v6
+    
+    - name: Setup dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y zsh git
+        git config --global user.email "test@example.com"
+        git config --global user.name "Test User"
+        git config --global init.defaultBranch main
+    
+    - name: Start git server
+      run: |
+        cd tests
+        docker compose up -d
+        sleep 10
+    
+    - name: Setup SSH key
+      run: |
+        mkdir -p ~/.ssh
+        ssh-keygen -t rsa -b 4096 -f ~/.ssh/id_rsa -N ""
+        chmod 600 ~/.ssh/id_rsa
+        chmod 644 ~/.ssh/id_rsa.pub
+    
+    - name: Configure git server with SSH key
+      run: |
+        # Copy public key to container
+        docker cp ~/.ssh/id_rsa.pub gbare-test-git-server:/home/git/.ssh/authorized_keys
+        # Set correct permissions
+        docker exec gbare-test-git-server chown git:git /home/git/.ssh/authorized_keys
+        docker exec gbare-test-git-server chmod 600 /home/git/.ssh/authorized_keys
+        # Verify SSH is running
+        docker exec gbare-test-git-server ps aux | grep sshd
+    
+    - name: Add SSH known hosts
+      run: |
+        sleep 2
+        ssh-keyscan -p 2222 localhost >> ~/.ssh/known_hosts 2>/dev/null
+    
+    - name: Run integration tests
+      shell: zsh {0}
+      env:
+        GBARE_USER: git
+        GBARE_HOST: localhost
+        GBARE_PORT: 2222
+        GBARE_PATH: /git-server/repos
+      run: |
+        cd $GITHUB_WORKSPACE
+        zsh tests/integration/test.zsh
+    
+    - name: Cleanup
+      if: always()
+      run: |
+        cd tests
+        docker compose down -v
