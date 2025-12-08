@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  git-server:
+    image: alpine:latest
+    container_name: gbare-test-git-server
+    ports:
+      - "2222:22"
+    command: >
+      sh -c "
+        apk add --no-cache openssh git &&
+        ssh-keygen -A &&
+        adduser -D -s /bin/sh git &&
+        echo 'git:git' | chpasswd &&
+        mkdir -p /home/git/.ssh /git-server/repos &&
+        chown -R git:git /home/git /git-server &&
+        chmod 700 /home/git/.ssh &&
+        sed -i 's/#PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config &&
+        sed -i 's/#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config &&
+        sed -i 's/#PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config &&
+        /usr/sbin/sshd -D -e
+      "
+    volumes:
+      - git-data:/git-server/repos
+
+volumes:
+  git-data:

@@ -1,32 +1,47 @@
 # gbare Integration Tests
 
-## 注意
+## 概要
 
-このディレクトリの統合テストは実際のSSHサーバーへの接続が必要です。
+実際のSSHサーバーを使用した統合テストです。
 
-## 必要要件
+## ローカルでの実行
 
-- SSH接続可能なサーバー
-- サーバー上にgitリポジトリを作成する権限
-- 環境変数の設定:
-  - `GBARE_USER`
-  - `GBARE_HOST`
-  - `GBARE_PATH`
+### 必要要件
 
-## 実行方法
+- Docker
+- Docker Compose
+- zsh
+- git
+
+### セットアップと実行
 
 ```bash
-# 環境変数を設定してから実行
-export GBARE_USER="your-username"
-export GBARE_HOST="your-server"
-export GBARE_PATH="/path/to/git"
+# Git serverを起動
+./tests/integration/setup.sh
+
+# 環境変数を設定
+export GBARE_USER=git
+export GBARE_HOST=localhost
+export GBARE_PORT=2222
+export GBARE_PATH=/git-server/repos
 
 # テスト実行
 zsh tests/integration/test.zsh
+
+# クリーンアップ
+./tests/integration/cleanup.sh
 ```
+
+## CI/CDでの実行
+
+GitHub Actionsで自動的に実行されます:
+- Dockerでgit-serverコンテナを起動
+- SSH鍵を設定
+- 統合テストを実行
+- 自動クリーンアップ
 
 ## 注意事項
 
-- 実際のサーバーにテストリポジトリが作成されます
-- テスト終了後にクリーンアップされますが、失敗時は手動削除が必要な場合があります
-- CI/CDでは実行されません（ユニットテストのみ実行）
+- ローカル実行時はポート2222が使用されます
+- テスト終了後は必ずクリーンアップしてください
+- 実際のリポジトリが作成・削除されます

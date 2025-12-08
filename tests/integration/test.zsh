@@ -32,8 +32,13 @@ print_section() {
 # ========================================
 
 # gbare プラグインを読み込む
-SCRIPT_DIR=$(dirname "$0")
-if [[ -f "${SCRIPT_DIR}/gbare.plugin.zsh" ]]; then
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+if [[ -f "${REPO_ROOT}/gbare.plugin.zsh" ]]; then
+  source "${REPO_ROOT}/gbare.plugin.zsh"
+  print_success "Loaded gbare.plugin.zsh from ${REPO_ROOT}"
+elif [[ -f "${SCRIPT_DIR}/gbare.plugin.zsh" ]]; then
   source "${SCRIPT_DIR}/gbare.plugin.zsh"
   print_success "Loaded gbare.plugin.zsh from ${SCRIPT_DIR}"
 elif [[ -f "${HOME}/.zsh/plugins/gbare/gbare.plugin.zsh" ]]; then
@@ -41,7 +46,7 @@ elif [[ -f "${HOME}/.zsh/plugins/gbare/gbare.plugin.zsh" ]]; then
   print_success "Loaded gbare.plugin.zsh from ~/.zsh/plugins/gbare"
 else
   print_error "gbare.plugin.zsh not found"
-  print_info "Make sure gbare.plugin.zsh is in the same directory as this test script"
+  print_info "Searched in: ${REPO_ROOT}, ${SCRIPT_DIR}, ${HOME}/.zsh/plugins/gbare"
   exit 1
 fi
 
