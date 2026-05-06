@@ -25,6 +25,29 @@
 # Default: "/volume1/homes/${GBARE_USER}/git"
 : ${GBARE_PATH:="/volume1/homes/${GBARE_USER}/git"}
 
+# GBARE_COLOR - Enable color output
+# Default: "true"
+: ${GBARE_COLOR:="true"}
+
+# Color definitions
+if [[ "$GBARE_COLOR" == "true" ]] && [[ -t 1 ]]; then
+  GBARE_COLOR_RESET=$'\033[0m'
+  GBARE_COLOR_RED=$'\033[0;31m'
+  GBARE_COLOR_GREEN=$'\033[0;32m'
+  GBARE_COLOR_YELLOW=$'\033[0;33m'
+  GBARE_COLOR_BLUE=$'\033[0;34m'
+  GBARE_COLOR_CYAN=$'\033[0;36m'
+  GBARE_COLOR_BOLD=$'\033[1m'
+else
+  GBARE_COLOR_RESET=""
+  GBARE_COLOR_RED=""
+  GBARE_COLOR_GREEN=""
+  GBARE_COLOR_YELLOW=""
+  GBARE_COLOR_BLUE=""
+  GBARE_COLOR_CYAN=""
+  GBARE_COLOR_BOLD=""
+fi
+
 # ========================================
 # Helper Functions
 # ========================================
@@ -84,8 +107,8 @@ _gbare_remote_url() {
 _gbare_create() {
   local repo_name=""
   local auto_yes=false
-  
-  # 引数をパース
+
+  # Parse arguments
   while [[ $# -gt 0 ]]; do
     case $1 in
       -y|--yes)
@@ -98,14 +121,14 @@ _gbare_create() {
         ;;
     esac
   done
-  
-  # 引数がなければカレントディレクトリ名を使用
+
+  # Use current directory name if no argument provided
   if [[ -z "$repo_name" ]]; then
     repo_name=$(basename "$PWD")
     echo "No repository name provided, using current directory name: ${repo_name}"
   fi
-  
-  # 確認
+
+  # Confirmation
   if [[ "$auto_yes" == false ]]; then
     echo ""
     echo "Creating bare repository:"
@@ -118,38 +141,38 @@ _gbare_create() {
     echo ""
     echo -n "Continue? (y/N): "
     read confirmation
-    
+
     if [[ ! "$confirmation" =~ ^[Yy]$ ]]; then
       echo "Cancelled"
       return 0
     fi
   fi
-  
+
   echo ""
   echo "Creating bare repository: ${repo_name}.git"
-  
-  # NAS/サーバー上にベアリポジトリを作成
+
+  # Create bare repository on server
   _gbare_ssh "git init --bare ${GBARE_PATH}/${repo_name}.git"
-  
+
   if [[ $? -eq 0 ]]; then
     echo "✓ Bare repository created on ${GBARE_HOST}"
-    
-    # ローカルをgit init（既存のリポジトリでなければ）
+
+    # Initialize local repo if not already a git repo
     if [[ ! -d .git ]]; then
       git init
       echo "✓ Local repository initialized"
     fi
-    
-    # リモートを追加
+
+    # Add remote
     local remote_url=$(_gbare_remote_url "${repo_name}")
     git remote add origin ${remote_url} 2>/dev/null
-    
+
     if [[ $? -eq 0 ]]; then
       echo "✓ Remote 'origin' added"
     else
       echo "⚠ Remote 'origin' already exists"
     fi
-    
+
     echo ""
     echo "Repository URL: ${remote_url}"
     echo ""
@@ -177,14 +200,14 @@ _gbare_create() {
 _gbare_list() {
   echo "Bare repositories on ${GBARE_HOST}:"
   echo ""
-  
+
   local repos=$(_gbare_ssh "ls -1d ${GBARE_PATH}/*.git 2>/dev/null" 2>/dev/null)
-  
+
   if [[ -z "$repos" ]]; then
     echo "No repositories found"
     return 0
   fi
-  
+
   echo "$repos" | sed 's/.*\///' | sed 's/\.git$//' | while read repo; do
     echo "  • $repo"
   done
@@ -203,16 +226,16 @@ _gbare_list() {
 _gbare_clone() {
   local repo_name=$1
   local target_dir=$2
-  
+
   if [[ -z "$repo_name" ]]; then
     echo "Usage: gbare clone <repository-name> [directory]"
     return 1
   fi
-  
+
   local remote_url=$(_gbare_remote_url "${repo_name}")
-  
+
   echo "Cloning from: ${remote_url}"
-  
+
   if [[ -n "$target_dir" ]]; then
     git clone ${remote_url} ${target_dir}
   else
@@ -235,21 +258,21 @@ _gbare_clone() {
 #   # => Repository deleted: myproject.git
 _gbare_delete() {
   local repo_name=$1
-  
+
   if [[ -z "$repo_name" ]]; then
     echo "Usage: gbare delete <repository-name>"
     return 1
   fi
-  
+
   echo "⚠️  WARNING: This will permanently delete ${repo_name}.git from ${GBARE_HOST}"
   echo "  Path: ${GBARE_PATH}/${repo_name}.git"
   echo ""
   echo -n "Type repository name to confirm: "
   read confirmation
-  
+
   if [[ "$confirmation" == "$repo_name" ]]; then
     _gbare_ssh "rm -rf ${GBARE_PATH}/${repo_name}.git"
-    
+
     if [[ $? -eq 0 ]]; then
       echo "✓ Repository deleted: ${repo_name}.git"
     else
@@ -277,26 +300,26 @@ _gbare_delete() {
 #   # => Branches and tags:
 _gbare_info() {
   local repo_name=$1
-  
+
   if [[ -z "$repo_name" ]]; then
     echo "Usage: gbare info <repository-name>"
     return 1
   fi
-  
+
   local remote_url=$(_gbare_remote_url "${repo_name}")
-  
+
   echo "Repository: ${repo_name}.git"
   echo "Server: ${GBARE_HOST}"
   if [[ -n "$GBARE_PORT" ]]; then
     echo "Port: ${GBARE_PORT}"
   fi
   echo "SSH URL: ${remote_url}"
-  
+
   if command -v git >/dev/null 2>&1; then
     echo ""
     echo "Branches and tags:"
     _gbare_ssh "cd ${GBARE_PATH}/${repo_name}.git && git show-ref 2>/dev/null" 2>/dev/null
-    
+
     if [[ $? -ne 0 ]]; then
       echo "  (empty repository or connection failed)"
     fi
@@ -316,12 +339,12 @@ _gbare_info() {
 #   # => ssh://user@nas/path/myproject.git
 _gbare_url() {
   local repo_name=$1
-  
+
   if [[ -z "$repo_name" ]]; then
     echo "Usage: gbare url <repository-name>"
     return 1
   fi
-  
+
   _gbare_remote_url "${repo_name}"
 }
 
@@ -343,8 +366,8 @@ _gbare_remote() {
   local repo_name=""
   local remote_name="origin"
   local auto_yes=false
-  
-  # 引数をパース
+
+  # Parse arguments
   while [[ $# -gt 0 ]]; do
     case $1 in
       -y|--yes)
@@ -361,21 +384,21 @@ _gbare_remote() {
         ;;
     esac
   done
-  
-  # 引数がなければカレントディレクトリ名を使用
+
+  # Use current directory name if no argument provided
   if [[ -z "$repo_name" ]]; then
     repo_name=$(basename "$PWD")
     echo "No repository name provided, using current directory name: ${repo_name}"
   fi
-  
+
   if [[ ! -d .git ]]; then
     echo "✗ Not a git repository (no .git directory found)"
     return 1
   fi
-  
+
   local remote_url=$(_gbare_remote_url "${repo_name}")
-  
-  # 確認
+
+  # Confirmation
   if [[ "$auto_yes" == false ]]; then
     echo ""
     echo "Adding remote:"
@@ -385,15 +408,15 @@ _gbare_remote() {
     echo ""
     echo -n "Continue? (y/N): "
     read confirmation
-    
+
     if [[ ! "$confirmation" =~ ^[Yy]$ ]]; then
       echo "Cancelled"
       return 0
     fi
   fi
-  
+
   git remote add ${remote_name} ${remote_url}
-  
+
   if [[ $? -eq 0 ]]; then
     echo "✓ Remote '${remote_name}' added: ${remote_url}"
   else
@@ -422,9 +445,159 @@ _gbare_config() {
   echo "  GBARE_HOST: ${GBARE_HOST}"
   echo "  GBARE_PORT: ${GBARE_PORT:-"(default)"}"
   echo "  GBARE_PATH: ${GBARE_PATH}"
+  echo "  GBARE_COLOR: ${GBARE_COLOR}"
   echo ""
   echo "Set these in your ~/.zshrc or Sheldon plugins.toml"
 }
+
+# ========================================
+# New Features
+# ========================================
+
+# Sync local repository with remote (local → remote)
+# Usage: _gbare_sync [repo_name] [remote_name]
+# Args:
+#   repo_name   - Name of the repository (defaults to current directory name)
+#   remote_name - Name of the remote (defaults to "origin")
+# Returns:
+#   0 on success, 1 on failure
+# Prerequisites:
+#   Current directory must be a git repository
+# Example:
+#   _gbare_sync                    # Sync current repo with origin
+#   _gbare_sync myproject upstream # Sync with upstream remote
+_gbare_sync() {
+  local repo_name=$1
+  local remote_name=${2:-origin}
+
+  if [[ -z "$repo_name" ]]; then
+    repo_name=$(basename "$PWD")
+    echo "${GBARE_COLOR_CYAN}No repository name provided, using current directory name: ${repo_name}${GBARE_COLOR_RESET}"
+  fi
+
+  if [[ ! -d .git ]]; then
+    echo "${GBARE_COLOR_RED}✗ Not a git repository (no .git directory found)${GBARE_COLOR_RESET}"
+    return 1
+  fi
+
+  echo "${GBARE_COLOR_BLUE}Syncing repository: ${repo_name}${GBARE_COLOR_RESET}"
+  echo ""
+
+  local remote_url=$(_gbare_remote_url "${repo_name}")
+
+  if ! git remote | grep -q "^${remote_name}$"; then
+    echo "${GBARE_COLOR_YELLOW}Remote '${remote_name}' not found, adding...${GBARE_COLOR_RESET}"
+    git remote add ${remote_name} ${remote_url}
+  fi
+
+  echo "${GBARE_COLOR_GREEN}Pulling latest changes...${GBARE_COLOR_RESET}"
+  git pull ${remote_name} main 2>/dev/null || git pull ${remote_name} master 2>/dev/null
+
+  echo "${GBARE_COLOR_GREEN}Pushing local changes...${GBARE_COLOR_RESET}"
+  git push ${remote_name} HEAD:main 2>/dev/null || git push ${remote_name} HEAD:master 2>/dev/null
+
+  if [[ $? -eq 0 ]]; then
+    echo ""
+    echo "${GBARE_COLOR_GREEN}✓ Sync completed successfully${GBARE_COLOR_RESET}"
+  else
+    echo ""
+    echo "${GBARE_COLOR_RED}✗ Sync failed${GBARE_COLOR_RESET}"
+    return 1
+  fi
+}
+
+# Backup all repositories to local directory
+# Usage: _gbare_backup [backup_dir]
+# Args:
+#   backup_dir - Directory to store backups (default: "${HOME}/gbare_backups")
+# Returns:
+#   0 on success
+# Output:
+#   Creates mirrored clones of all remote repositories in timestamped subdirectory
+# Example:
+#   _gbare_backup                  # Backup to ~/gbare_backups
+#   _gbare_backup ~/my_backups     # Backup to specified directory
+_gbare_backup() {
+  local backup_dir=${1:-"${HOME}/gbare_backups"}
+  local timestamp=$(date +%Y%m%d_%H%M%S)
+
+  echo "${GBARE_COLOR_BLUE}Creating backup of all repositories...${GBARE_COLOR_RESET}"
+  echo ""
+
+  mkdir -p "${backup_dir}/${timestamp}"
+
+  local repos=$(_gbare_ssh "ls -1d ${GBARE_PATH}/*.git 2>/dev/null" 2>/dev/null)
+
+  if [[ -z "$repos" ]]; then
+    echo "${GBARE_COLOR_YELLOW}No repositories found to backup${GBARE_COLOR_RESET}"
+    return 0
+  fi
+
+  echo "$repos" | while read repo_path; do
+    local repo_name=$(basename "$repo_path" .git)
+    echo "${GBARE_COLOR_CYAN}Backing up: ${repo_name}${GBARE_COLOR_RESET}"
+
+    local remote_url=$(_gbare_remote_url "${repo_name}")
+    local target="${backup_dir}/${timestamp}/${repo_name}"
+
+    git clone --mirror ${remote_url} "${target}.git" 2>/dev/null
+
+    if [[ $? -eq 0 ]]; then
+      echo "${GBARE_COLOR_GREEN}  ✓ ${repo_name} backed up${GBARE_COLOR_RESET}"
+    else
+      echo "${GBARE_COLOR_RED}  ✗ Failed to backup ${repo_name}${GBARE_COLOR_RESET}"
+    fi
+  done
+
+  echo ""
+  echo "${GBARE_COLOR_GREEN}✓ Backup completed: ${backup_dir}/${timestamp}${GBARE_COLOR_RESET}"
+}
+
+# Search repositories by name
+# Usage: _gbare_search <query>
+# Args:
+#   query - Search string (case-insensitive substring match)
+# Returns:
+#   0 on success, 1 if query is not provided
+# Output:
+#   Prints matching repository names
+# Example:
+#   _gbare_search myproject
+#   # =>   • myproject
+_gbare_search() {
+  local query=$1
+
+  if [[ -z "$query" ]]; then
+    echo "Usage: gbare search <query>"
+    return 1
+  fi
+
+  echo "${GBARE_COLOR_BLUE}Searching repositories for: ${query}${GBARE_COLOR_RESET}"
+  echo ""
+
+  local repos=$(_gbare_ssh "ls -1d ${GBARE_PATH}/*.git 2>/dev/null" 2>/dev/null)
+
+  if [[ -z "$repos" ]]; then
+    echo "${GBARE_COLOR_YELLOW}No repositories found${GBARE_COLOR_RESET}"
+    return 0
+  fi
+
+  local found=0
+  echo "$repos" | sed 's/.*\///' | sed 's/\.git$//' | while read repo; do
+    if echo "$repo" | grep -i "$query" > /dev/null 2>&1; then
+      echo "${GBARE_COLOR_GREEN}  • $repo${GBARE_COLOR_RESET}"
+      found=1
+    fi
+  done
+
+  if [[ $found -eq 0 ]]; then
+    echo "${GBARE_COLOR_YELLOW}No repositories matching '${query}'${GBARE_COLOR_RESET}"
+  fi
+}
+
+# ========================================
+# Main Command (subcommand style)
+# ========================================
 
 # Main entry point for gbare commands
 # Dispatches subcommands to appropriate handler functions
@@ -437,6 +610,9 @@ _gbare_config() {
 #   info, i       - Show repository information
 #   url, u        - Get repository SSH URL
 #   remote, r     - Add remote to existing local repo
+#   sync, s       - Sync local repo with remote
+#   backup, b     - Backup all repositories
+#   search, se    - Search repositories by name
 #   config, cfg   - Show current configuration
 #   help, h       - Show help message
 # Returns:
@@ -448,7 +624,7 @@ _gbare_config() {
 gbare() {
   local cmd=$1
   shift
-  
+
   case "$cmd" in
     create|c)
       _gbare_create "$@"
@@ -470,6 +646,15 @@ gbare() {
       ;;
     remote|r)
       _gbare_remote "$@"
+      ;;
+    sync|s)
+      _gbare_sync "$@"
+      ;;
+    backup|b)
+      _gbare_backup "$@"
+      ;;
+    search|se)
+      _gbare_search "$@"
       ;;
     config|cfg)
       _gbare_config "$@"
@@ -494,6 +679,11 @@ gbare() {
       echo "                                   Add remote to existing local repo"
       echo "                                   (uses current directory name if not specified)"
       echo "                                   -y, --yes: Skip confirmation prompt"
+      echo "  sync, s       [name] [remote]    Sync local repo with remote"
+      echo "                                   (uses current directory name if not specified)"
+      echo "  backup, b     [dir]              Backup all repositories to local dir"
+      echo "                                   (default: ~/gbare_backups)"
+      echo "  search, se    <query>            Search repositories by name"
       echo "  config, cfg                      Show current configuration"
       echo "  help, h                          Show this help"
       echo ""
@@ -502,6 +692,7 @@ gbare() {
       echo "  GBARE_HOST  - Server hostname or IP (default: nas)"
       echo "  GBARE_PORT  - SSH port (optional, defaults to 22)"
       echo "  GBARE_PATH  - Path to git repositories (default: /volume1/homes/\${GBARE_USER}/git)"
+      echo "  GBARE_COLOR - Enable color output (default: true)"
       echo ""
       echo "Examples:"
       echo "  gbare create                     # Create repo with current dir name"
@@ -515,6 +706,9 @@ gbare() {
       echo "  gbare remote myproject           # Add remote to current repo"
       echo "  gbare remote myproject origin -y # Add remote without confirmation"
       echo "  gbare url myproject              # Get SSH URL"
+      echo "  gbare sync                       # Sync current repo"
+      echo "  gbare backup ~/backups           # Backup all repos to ~/backups"
+      echo "  gbare search myproject           # Search for repos matching 'myproject'"
       ;;
     *)
       echo "Unknown command: $cmd"
@@ -545,17 +739,17 @@ _gbare_repos() {
 # Usage: (called by zsh completion system)
 # Completion behavior:
 #   - First tab: shows available subcommands
-#   - Second tab (for clone/delete/info/url): shows repository names from server
-#   - Second tab (for create/remote): no completion (uses current directory name)
+#   - Second tab (for clone/delete/info/url/search): shows repository names from server
+#   - Second tab (for create/remote/sync): no completion (uses current directory name)
 # Registers with:
 #   compdef _gbare gbare
 _gbare() {
   local line state
-  
+
   _arguments -C \
     "1: :->cmds" \
     "*::arg:->args"
-  
+
   case "$state" in
     cmds)
       _values "gbare command" \
@@ -566,16 +760,19 @@ _gbare() {
         "info[Show repository information]" \
         "url[Get repository SSH URL]" \
         "remote[Add remote to existing local repo]" \
+        "sync[Sync local repo with remote]" \
+        "backup[Backup all repositories]" \
+        "search[Search repositories by name]" \
         "config[Show current configuration]" \
         "help[Show help]"
       ;;
     args)
       case $line[1] in
-        clone|cl|delete|rm|d|info|i|url|u)
+        clone|cl|delete|rm|d|info|i|url|u|search|se)
           _gbare_repos
           ;;
-        create|c|remote|r)
-          # create と remote はオプショナルなので補完しない（カレントディレクトリ名を使う）
+        create|c|remote|r|sync|s)
+          # create, remote, sync use current directory name by default
           ;;
       esac
       ;;
