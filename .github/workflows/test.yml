@@ -69,6 +69,25 @@ jobs:
       run: |
         sleep 2
         ssh-keyscan -p 2222 localhost >> ~/.ssh/known_hosts 2>/dev/null
+        cat ~/.ssh/known_hosts
+    
+    - name: Configure SSH to use key
+      run: |
+        cat >> ~/.ssh/config <<'EOF'
+        Host localhost
+          Port 2222
+          IdentityFile ~/.ssh/id_rsa
+          StrictHostKeyChecking no
+        EOF
+        chmod 600 ~/.ssh/config
+    
+    - name: Wait for SSH server to be ready
+      run: |
+        for i in $(seq 1 10); do
+          echo "Attempt $i: Testing SSH connection..."
+          ssh -o LogLevel=ERROR -o ConnectTimeout=5 git@localhost "echo OK" 2>&1 && break
+          sleep 3
+        done
     
     - name: Run integration tests
       shell: zsh {0}
