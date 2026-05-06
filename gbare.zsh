@@ -12,16 +12,88 @@
 : ${GBARE_PATH:="/volume1/homes/${GBARE_USER}/git"}
 
 # ========================================
+# Error Handling Configuration
+# ========================================
+
+# SSH接続タイムアウト（秒）
+: ${GBARE_SSH_TIMEOUT:="10"}
+
+# エラーメッセージ用カラー（ターミナルが対応している場合）
+if [[ -t 1 ]]; then
+  _GBARE_RED=$'\033[0;31m'
+  _GBARE_YELLOW=$'\033[0;33m'
+  _GBARE_GREEN=$'\033[0;32m'
+  _GBARE_RESET=$'\033[0m'
+else
+  _GBARE_RED=""
+  _GBARE_YELLOW=""
+  _GBARE_GREEN=""
+  _GBARE_RESET=""
+fi
+
+# ========================================
 # Helper Functions
 # ========================================
 
 # SSH コマンドを構築（ポート指定を適切に処理）
 _gbare_ssh() {
+  local ssh_opts="-o LogLevel=ERROR -o ConnectTimeout=${GBARE_SSH_TIMEOUT} -o ServerAliveInterval=5 -o ServerAliveCountMax=2"
+
   if [[ -n "$GBARE_PORT" ]]; then
-    ssh -o LogLevel=ERROR -p ${GBARE_PORT} ${GBARE_USER}@${GBARE_HOST} "$@"
+    ssh ${ssh_opts} -p ${GBARE_PORT} ${GBARE_USER}@${GBARE_HOST} "$@"
   else
-    ssh -o LogLevel=ERROR ${GBARE_USER}@${GBARE_HOST} "$@"
+    ssh ${ssh_opts} ${GBARE_USER}@${GBARE_HOST} "$@"
   fi
+}
+
+# SSH接続チェック
+_gbare_check_ssh() {
+  local output
+  output=$(_gbare_ssh "echo OK" 2>&1)
+  local exit_code=$?
+
+  if [[ $exit_code -ne 0 ]]; then
+    echo "${_GBARE_RED}Error: SSH connection failed${_GBARE_RESET}"
+    echo "  Host: ${GBARE_HOST}"
+    if [[ -n "$GBARE_PORT" ]]; then
+      echo "  Port: ${GBARE_PORT}"
+    fi
+    echo "  User: ${GBARE_USER}"
+    echo ""
+    echo "Troubleshooting:"
+    echo "  1. Check your network connection"
+    echo "  2. Verify SSH key is configured: ssh-add -l"
+    echo "  3. Test connection: ssh ${GBARE_USER}@${GBARE_HOST} 'echo test'"
+    if [[ $exit_code -eq 255 ]]; then
+      echo "  4. Connection was refused or timed out"
+    fi
+    return 1
+  fi
+
+  return 0
+}
+
+# リポジトリ存在チェック
+_gbare_check_repo_exists() {
+  local repo_name=$1
+
+  _gbare_ssh "test -d ${GBARE_PATH}/${repo_name}.git" 2>/dev/null
+  return $?
+}
+
+# エラーメッセージ表示
+_gbare_error() {
+  echo "${_GBARE_RED}Error: $1${_GBARE_RESET}" >&2
+}
+
+# 警告メッセージ表示
+_gbare_warn() {
+  echo "${_GBARE_YELLOW}Warning: $1${_GBARE_RESET}"
+}
+
+# 成功メッセージ表示
+_gbare_ok() {
+  echo "${_GBARE_GREEN}$1${_GBARE_RESET}"
 }
 
 # リモート URL を構築（ポート指定を適切に処理）
@@ -83,19 +155,32 @@ _gbare_create() {
     fi
   fi
   
+  # SSH接続チェック
+  if ! _gbare_check_ssh; then
+    return 1
+  fi
+  
   echo ""
   echo "Creating bare repository: ${repo_name}.git"
   
-  # NAS/サーバー上にベアリポジトリを作成
-  _gbare_ssh "git init --bare ${GBARE_PATH}/${repo_name}.git"
+  # 既存リポジトリのチェック
+  if _gbare_check_repo_exists "${repo_name}"; then
+    _gbare_warn "Repository '${repo_name}.git' already exists on ${GBARE_HOST}"
+    return 1
+  fi
   
-  if [[ $? -eq 0 ]]; then
-    echo "✓ Bare repository created on ${GBARE_HOST}"
+  # NAS/サーバー上にベアリポジトリを作成
+  local output
+  output=$(_gbare_ssh "git init --bare ${GBARE_PATH}/${repo_name}.git" 2>&1)
+  local exit_code=$?
+  
+  if [[ $exit_code -eq 0 ]]; then
+    _gbare_ok "Bare repository created on ${GBARE_HOST}"
     
     # ローカルをgit init（既存のリポジトリでなければ）
     if [[ ! -d .git ]]; then
       git init
-      echo "✓ Local repository initialized"
+      _gbare_ok "Local repository initialized"
     fi
     
     # リモートを追加
@@ -103,9 +188,9 @@ _gbare_create() {
     git remote add origin ${remote_url} 2>/dev/null
     
     if [[ $? -eq 0 ]]; then
-      echo "✓ Remote 'origin' added"
+      _gbare_ok "Remote 'origin' added"
     else
-      echo "⚠ Remote 'origin' already exists"
+      _gbare_warn "Remote 'origin' already exists"
     fi
     
     echo ""
@@ -116,24 +201,40 @@ _gbare_create() {
     echo "  git commit -m 'first commit'"
     echo "  git push -u origin main"
   else
-    echo "✗ Failed to create repository"
+    _gbare_error "Failed to create repository on ${GBARE_HOST}"
+    if [[ -n "$output" ]]; then
+      echo "  Details: ${output}"
+    fi
     return 1
   fi
 }
 
 # リポジトリ一覧
 _gbare_list() {
+  # SSH接続チェック
+  if ! _gbare_check_ssh; then
+    return 1
+  fi
+
   echo "Bare repositories on ${GBARE_HOST}:"
   echo ""
   
-  local repos=$(_gbare_ssh "ls -1d ${GBARE_PATH}/*.git 2>/dev/null" 2>/dev/null)
+  local output
+  output=$(_gbare_ssh "ls -1d ${GBARE_PATH}/*.git 2>/dev/null" 2>&1)
+  local exit_code=$?
+
+  if [[ $exit_code -ne 0 ]]; then
+    _gbare_error "Failed to list repositories"
+    echo "  Details: ${output}"
+    return 1
+  fi
   
-  if [[ -z "$repos" ]]; then
+  if [[ -z "$output" ]]; then
     echo "No repositories found"
     return 0
   fi
   
-  echo "$repos" | sed 's/.*\///' | sed 's/\.git$//' | while read repo; do
+  echo "$output" | sed 's/.*\///' | sed 's/\.git$//' | while read repo; do
     echo "  • $repo"
   done
 }
@@ -148,15 +249,41 @@ _gbare_clone() {
     return 1
   fi
   
+  # SSH接続チェック
+  if ! _gbare_check_ssh; then
+    return 1
+  fi
+  
+  # リポジトリ存在チェック
+  if ! _gbare_check_repo_exists "${repo_name}"; then
+    _gbare_error "Repository '${repo_name}.git' does not exist on ${GBARE_HOST}"
+    echo ""
+    echo "Available repositories:"
+    _gbare_ssh "ls -1d ${GBARE_PATH}/*.git 2>/dev/null" 2>/dev/null | sed 's/.*\///' | sed 's/\.git$//' | while read repo; do
+      echo "  • $repo"
+    done
+    return 1
+  fi
+  
   local remote_url=$(_gbare_remote_url "${repo_name}")
   
   echo "Cloning from: ${remote_url}"
   
+  local output
   if [[ -n "$target_dir" ]]; then
-    git clone ${remote_url} ${target_dir}
+    output=$(git clone ${remote_url} ${target_dir} 2>&1)
   else
-    git clone ${remote_url}
+    output=$(git clone ${remote_url} 2>&1)
   fi
+  local exit_code=$?
+  
+  if [[ $exit_code -ne 0 ]]; then
+    _gbare_error "Failed to clone repository"
+    echo "  Details: ${output}"
+    return 1
+  fi
+  
+  _gbare_ok "Repository cloned successfully"
 }
 
 # リポジトリ削除
@@ -168,6 +295,17 @@ _gbare_delete() {
     return 1
   fi
   
+  # SSH接続チェック
+  if ! _gbare_check_ssh; then
+    return 1
+  fi
+  
+  # リポジトリ存在チェック
+  if ! _gbare_check_repo_exists "${repo_name}"; then
+    _gbare_error "Repository '${repo_name}.git' does not exist on ${GBARE_HOST}"
+    return 1
+  fi
+  
   echo "⚠️  WARNING: This will permanently delete ${repo_name}.git from ${GBARE_HOST}"
   echo "  Path: ${GBARE_PATH}/${repo_name}.git"
   echo ""
@@ -175,12 +313,15 @@ _gbare_delete() {
   read confirmation
   
   if [[ "$confirmation" == "$repo_name" ]]; then
-    _gbare_ssh "rm -rf ${GBARE_PATH}/${repo_name}.git"
+    local output
+    output=$(_gbare_ssh "rm -rf ${GBARE_PATH}/${repo_name}.git" 2>&1)
+    local exit_code=$?
     
-    if [[ $? -eq 0 ]]; then
-      echo "✓ Repository deleted: ${repo_name}.git"
+    if [[ $exit_code -eq 0 ]]; then
+      _gbare_ok "Repository deleted: ${repo_name}.git"
     else
-      echo "✗ Failed to delete repository"
+      _gbare_error "Failed to delete repository"
+      echo "  Details: ${output}"
       return 1
     fi
   else
@@ -197,6 +338,17 @@ _gbare_info() {
     return 1
   fi
   
+  # SSH接続チェック
+  if ! _gbare_check_ssh; then
+    return 1
+  fi
+  
+  # リポジトリ存在チェック
+  if ! _gbare_check_repo_exists "${repo_name}"; then
+    _gbare_error "Repository '${repo_name}.git' does not exist on ${GBARE_HOST}"
+    return 1
+  fi
+  
   local remote_url=$(_gbare_remote_url "${repo_name}")
   
   echo "Repository: ${repo_name}.git"
@@ -209,10 +361,15 @@ _gbare_info() {
   if command -v git >/dev/null 2>&1; then
     echo ""
     echo "Branches and tags:"
-    _gbare_ssh "cd ${GBARE_PATH}/${repo_name}.git && git show-ref 2>/dev/null" 2>/dev/null
+    local output
+    output=$(_gbare_ssh "cd ${GBARE_PATH}/${repo_name}.git && git show-ref 2>/dev/null" 2>&1)
     
-    if [[ $? -ne 0 ]]; then
-      echo "  (empty repository or connection failed)"
+    if [[ -z "$output" ]]; then
+      echo "  (empty repository)"
+    else
+      echo "$output" | while read line; do
+        echo "  $line"
+      done
     fi
   fi
 }
@@ -260,7 +417,18 @@ _gbare_remote() {
   fi
   
   if [[ ! -d .git ]]; then
-    echo "✗ Not a git repository (no .git directory found)"
+    _gbare_error "Not a git repository (no .git directory found)"
+    return 1
+  fi
+  
+  # SSH接続チェック
+  if ! _gbare_check_ssh; then
+    return 1
+  fi
+  
+  # リポジトリ存在チェック
+  if ! _gbare_check_repo_exists "${repo_name}"; then
+    _gbare_error "Repository '${repo_name}.git' does not exist on ${GBARE_HOST}"
     return 1
   fi
   
@@ -283,12 +451,15 @@ _gbare_remote() {
     fi
   fi
   
-  git remote add ${remote_name} ${remote_url}
+  local output
+  output=$(git remote add ${remote_name} ${remote_url} 2>&1)
+  local exit_code=$?
   
-  if [[ $? -eq 0 ]]; then
-    echo "✓ Remote '${remote_name}' added: ${remote_url}"
+  if [[ $exit_code -eq 0 ]]; then
+    _gbare_ok "Remote '${remote_name}' added: ${remote_url}"
   else
-    echo "✗ Failed to add remote (may already exist)"
+    _gbare_error "Failed to add remote (may already exist)"
+    echo "  Details: ${output}"
     return 1
   fi
 }
@@ -301,6 +472,7 @@ _gbare_config() {
   echo "  GBARE_HOST: ${GBARE_HOST}"
   echo "  GBARE_PORT: ${GBARE_PORT:-"(default)"}"
   echo "  GBARE_PATH: ${GBARE_PATH}"
+  echo "  GBARE_SSH_TIMEOUT: ${GBARE_SSH_TIMEOUT}s"
   echo ""
   echo "Set these in your ~/.zshrc or Sheldon plugins.toml"
 }
@@ -395,7 +567,9 @@ gbare() {
 # リポジトリリスト取得（補完用）
 _gbare_repos() {
   local repos
-  repos=(${(f)"$(_gbare_ssh "ls -1d ${GBARE_PATH}/*.git 2>/dev/null" 2>/dev/null | sed 's/.*\///' | sed 's/\.git$//')"})
+  local output
+  output=$(_gbare_ssh "ls -1d ${GBARE_PATH}/*.git 2>/dev/null" 2>/dev/null | sed 's/.*\///' | sed 's/\.git$//')
+  repos=(${(f)"$output"})
   _describe 'repository' repos
 }
 
