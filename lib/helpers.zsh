@@ -2,6 +2,26 @@
 # gbare - Helper Functions
 # ========================================
 
+# Color definitions
+: ${GBARE_COLOR:="true"}
+if [[ "$GBARE_COLOR" == "true" ]] && [[ -t 1 ]]; then
+  GBARE_COLOR_RESET=$'\033[0m'
+  GBARE_COLOR_RED=$'\033[0;31m'
+  GBARE_COLOR_GREEN=$'\033[0;32m'
+  GBARE_COLOR_YELLOW=$'\033[0;33m'
+  GBARE_COLOR_BLUE=$'\033[0;34m'
+  GBARE_COLOR_CYAN=$'\033[0;36m'
+  GBARE_COLOR_BOLD=$'\033[1m'
+else
+  GBARE_COLOR_RESET=""
+  GBARE_COLOR_RED=""
+  GBARE_COLOR_GREEN=""
+  GBARE_COLOR_YELLOW=""
+  GBARE_COLOR_BLUE=""
+  GBARE_COLOR_CYAN=""
+  GBARE_COLOR_BOLD=""
+fi
+
 # SSH コマンドを構築（ポート指定を適切に処理）
 _gbare_ssh() {
   if [[ -n "$GBARE_PORT" ]]; then

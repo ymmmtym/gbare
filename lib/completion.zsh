@@ -27,16 +27,19 @@ _gbare() {
         "info[Show repository information]" \
         "url[Get repository SSH URL]" \
         "remote[Add remote to existing local repo]" \
+        "sync[Sync local repo with remote]" \
+        "backup[Backup all repositories]" \
+        "search[Search repositories by name]" \
         "config[Show current configuration]" \
         "help[Show help]"
       ;;
     args)
       case $line[1] in
-        clone|cl|delete|rm|d|info|i|url|u)
+        clone|cl|delete|rm|d|info|i|url|u|search|se)
           _gbare_repos
           ;;
-        create|c|remote|r)
-          # create と remote はオプショナルなので補完しない（カレントディレクトリ名を使う）
+        create|c|remote|r|sync|s)
+          # create, remote, sync use current directory name by default
           ;;
       esac
       ;;

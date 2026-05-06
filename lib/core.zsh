@@ -265,8 +265,119 @@ _gbare_config() {
   echo "  GBARE_HOST: ${GBARE_HOST}"
   echo "  GBARE_PORT: ${GBARE_PORT:-"(default)"}"
   echo "  GBARE_PATH: ${GBARE_PATH}"
+  echo "  GBARE_COLOR: ${GBARE_COLOR}"
   echo ""
   echo "Set these in your ~/.zshrc or Sheldon plugins.toml"
+}
+
+# ローカルリポジトリをリモートと同期（ローカル → リモート）
+_gbare_sync() {
+  local repo_name=$1
+  local remote_name=${2:-origin}
+
+  if [[ -z "$repo_name" ]]; then
+    repo_name=$(basename "$PWD")
+    echo "${GBARE_COLOR_CYAN}No repository name provided, using current directory name: ${repo_name}${GBARE_COLOR_RESET}"
+  fi
+
+  if [[ ! -d .git ]]; then
+    echo "${GBARE_COLOR_RED}✗ Not a git repository (no .git directory found)${GBARE_COLOR_RESET}"
+    return 1
+  fi
+
+  echo "${GBARE_COLOR_BLUE}Syncing repository: ${repo_name}${GBARE_COLOR_RESET}"
+  echo ""
+
+  local remote_url=$(_gbare_remote_url "${repo_name}")
+
+  if ! git remote | grep -q "^${remote_name}$"; then
+    echo "${GBARE_COLOR_YELLOW}Remote '${remote_name}' not found, adding...${GBARE_COLOR_RESET}"
+    git remote add ${remote_name} ${remote_url}
+  fi
+
+  echo "${GBARE_COLOR_GREEN}Pulling latest changes...${GBARE_COLOR_RESET}"
+  git pull ${remote_name} main 2>/dev/null || git pull ${remote_name} master 2>/dev/null
+
+  echo "${GBARE_COLOR_GREEN}Pushing local changes...${GBARE_COLOR_RESET}"
+  git push ${remote_name} HEAD:main 2>/dev/null || git push ${remote_name} HEAD:master 2>/dev/null
+
+  if [[ $? -eq 0 ]]; then
+    echo ""
+    echo "${GBARE_COLOR_GREEN}✓ Sync completed successfully${GBARE_COLOR_RESET}"
+  else
+    echo ""
+    echo "${GBARE_COLOR_RED}✗ Sync failed${GBARE_COLOR_RESET}"
+    return 1
+  fi
+}
+
+# 全リポジトリをローカルにバックアップ
+_gbare_backup() {
+  local backup_dir=${1:-"${HOME}/gbare_backups"}
+  local timestamp=$(date +%Y%m%d_%H%M%S)
+
+  echo "${GBARE_COLOR_BLUE}Creating backup of all repositories...${GBARE_COLOR_RESET}"
+  echo ""
+
+  mkdir -p "${backup_dir}/${timestamp}"
+
+  local repos=$(_gbare_ssh "ls -1d ${GBARE_PATH}/*.git 2>/dev/null" 2>/dev/null)
+
+  if [[ -z "$repos" ]]; then
+    echo "${GBARE_COLOR_YELLOW}No repositories found to backup${GBARE_COLOR_RESET}"
+    return 0
+  fi
+
+  echo "$repos" | while read repo_path; do
+    local repo_name=$(basename "$repo_path" .git)
+    echo "${GBARE_COLOR_CYAN}Backing up: ${repo_name}${GBARE_COLOR_RESET}"
+
+    local remote_url=$(_gbare_remote_url "${repo_name}")
+    local target="${backup_dir}/${timestamp}/${repo_name}"
+
+    git clone --mirror ${remote_url} "${target}.git" 2>/dev/null
+
+    if [[ $? -eq 0 ]]; then
+      echo "${GBARE_COLOR_GREEN}  ✓ ${repo_name} backed up${GBARE_COLOR_RESET}"
+    else
+      echo "${GBARE_COLOR_RED}  ✗ Failed to backup ${repo_name}${GBARE_COLOR_RESET}"
+    fi
+  done
+
+  echo ""
+  echo "${GBARE_COLOR_GREEN}✓ Backup completed: ${backup_dir}/${timestamp}${GBARE_COLOR_RESET}"
+}
+
+# リポジトリ名で検索
+_gbare_search() {
+  local query=$1
+
+  if [[ -z "$query" ]]; then
+    echo "Usage: gbare search <query>"
+    return 1
+  fi
+
+  echo "${GBARE_COLOR_BLUE}Searching repositories for: ${query}${GBARE_COLOR_RESET}"
+  echo ""
+
+  local repos=$(_gbare_ssh "ls -1d ${GBARE_PATH}/*.git 2>/dev/null" 2>/dev/null)
+
+  if [[ -z "$repos" ]]; then
+    echo "${GBARE_COLOR_YELLOW}No repositories found${GBARE_COLOR_RESET}"
+    return 0
+  fi
+
+  local found=0
+  echo "$repos" | sed 's/.*\///' | sed 's/\.git$//' | while read repo; do
+    if echo "$repo" | grep -i "$query" > /dev/null 2>&1; then
+      echo "${GBARE_COLOR_GREEN}  • $repo${GBARE_COLOR_RESET}"
+      found=1
+    fi
+  done
+
+  if [[ $found -eq 0 ]]; then
+    echo "${GBARE_COLOR_YELLOW}No repositories matching '${query}'${GBARE_COLOR_RESET}"
+  fi
 }
 
 # ========================================
@@ -299,6 +410,15 @@ gbare() {
     remote|r)
       _gbare_remote "$@"
       ;;
+    sync|s)
+      _gbare_sync "$@"
+      ;;
+    backup|b)
+      _gbare_backup "$@"
+      ;;
+    search|se)
+      _gbare_search "$@"
+      ;;
     config|cfg)
       _gbare_config "$@"
       ;;
@@ -322,14 +442,20 @@ gbare() {
       echo "                                   Add remote to existing local repo"
       echo "                                   (uses current directory name if not specified)"
       echo "                                   -y, --yes: Skip confirmation prompt"
+      echo "  sync, s       [name] [remote]    Sync local repo with remote"
+      echo "                                   (uses current directory name if not specified)"
+      echo "  backup, b     [dir]              Backup all repositories to local dir"
+      echo "                                   (default: ~/gbare_backups)"
+      echo "  search, se    <query>            Search repositories by name"
       echo "  config, cfg                      Show current configuration"
-      echo "  help, h                          Show help"
+      echo "  help, h                          Show this help"
       echo ""
       echo "Configuration (set in ~/.zshrc or Sheldon):"
       echo "  GBARE_USER  - SSH username (default: yumenomatayume)"
       echo "  GBARE_HOST  - Server hostname or IP (default: nas)"
       echo "  GBARE_PORT  - SSH port (optional, defaults to 22)"
       echo "  GBARE_PATH  - Path to git repositories (default: /volume1/homes/\${GBARE_USER}/git)"
+      echo "  GBARE_COLOR - Enable color output (default: true)"
       echo ""
       echo "Examples:"
       echo "  gbare create                     # Create repo with current dir name"
@@ -343,6 +469,9 @@ gbare() {
       echo "  gbare remote myproject           # Add remote to current repo"
       echo "  gbare remote myproject origin -y # Add remote without confirmation"
       echo "  gbare url myproject              # Get SSH URL"
+      echo "  gbare sync                       # Sync current repo"
+      echo "  gbare backup ~/backups           # Backup all repos to ~/backups"
+      echo "  gbare search myproject           # Search for repos matching 'myproject'"
       ;;
     *)
       echo "Unknown command: $cmd"

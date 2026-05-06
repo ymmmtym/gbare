@@ -1,0 +1,149 @@
+.TH GBARE 1 "2025-12-05" "gbare" "User Commands"
+.SH NAME
+gbare \- manage bare Git repositories on remote servers
+.SH SYNOPSIS
+.B gbare
+.IR command " [" options "] [" arguments "]
+.SH DESCRIPTION
+.B gbare
+is a zsh plugin for managing bare Git repositories on remote servers (Linux/NAS) via SSH.
+It provides a simple command-line interface similar to GitHub's \fBgh\fR CLI for creating,
+cloning, listing, and deleting bare repositories on your own server.
+.SH COMMANDS
+.TP
+.BR create ", " c " [" name "] [" -y | --yes "]
+Create a new bare repository on the remote server.
+If \fIname\fR is omitted, uses the current directory name.
+The \fB-y\fR or \fB--yes\fR flag skips the confirmation prompt.
+Also initializes a local git repository and adds the remote if not already initialized.
+.TP
+.BR list ", " ls ", " l
+List all bare repositories on the remote server.
+.TP
+.BR clone ", " cl " <" name "> [" directory "]
+Clone a repository from the remote server.
+If \fIdirectory\fR is specified, clones into that directory.
+.TP
+.BR delete ", " rm ", " d " <" name ">
+Delete a repository from the remote server.
+Requires typing the repository name for confirmation.
+.TP
+.BR info ", " i " <" name ">
+Show repository information including server, SSH URL, branches, and tags.
+.TP
+.BR url ", " u " <" name ">
+Print the SSH URL for a repository.
+.TP
+.BR remote ", " r " [" name "] [" remote "] [" -y | --yes "]
+Add a remote to an existing local git repository.
+If \fIname\fR is omitted, uses the current directory name.
+If \fIremote\fR is omitted, defaults to "origin".
+The \fB-y\fR or \fB--yes\fR flag skips the confirmation prompt.
+.TP
+.BR config ", " cfg
+Display the current gbare configuration.
+.TP
+.BR help ", " h
+Show help message with usage information.
+.SH OPTIONS
+.TP
+.BR -y ", " --yes
+Skip confirmation prompts. Available for \fBcreate\fR and \fBremote\fR commands.
+.SH ENVIRONMENT VARIABLES
+.TP
+.B GBARE_USER
+SSH username for the remote server. Default: \fByumenomatayume\fR
+.TP
+.B GBARE_HOST
+Remote server hostname or IP address. Default: \fBnas\fR
+.TP
+.B GBARE_PORT
+SSH port number. If not set or empty, uses SSH default port 22.
+.TP
+.B GBARE_PATH
+Base path for bare repositories on the remote server.
+Default: \fB/volume1/homes/${GBARE_USER}/git\fR
+.SH EXAMPLES
+.TP
+Create a repository with the current directory name:
+.RS
+.nf
+gbare create
+.fi
+.RE
+.TP
+Create a repository without confirmation:
+.RS
+.nf
+gbare create myproject -y
+.fi
+.RE
+.TP
+List all repositories:
+.RS
+.nf
+gbare list
+.fi
+.RE
+.TP
+Clone a repository:
+.RS
+.nf
+gbare clone myproject
+.fi
+.RE
+.TP
+Add a remote to an existing local repository:
+.RS
+.nf
+gbare remote myproject
+.fi
+.RE
+.SH CONFIGURATION
+Environment variables can be set in \fB~/.zshrc\fR or via plugin managers like Sheldon.
+
+Example for Sheldon (\fB~/.config/sheldon/plugins.toml\fR):
+.RS
+.nf
+[plugins.gbare-env]
+inline = """
+export GBARE_USER="your-username"
+export GBARE_HOST="your-server"
+export GBARE_PATH="/var/git"
+"""
+
+[plugins.gbare]
+github = "yourusername/gbare"
+apply = ["source"]
+.fi
+.RE
+.SH REQUIREMENTS
+.TP
+.B zsh
+Shell environment
+.TP
+.B git
+Version control system
+.TP
+.B ssh
+SSH client for remote server access
+.SH TROUBLESHOOTING
+.TP
+.B SSH connection errors
+Verify SSH connectivity: \fBssh user@your-server "echo 'Connection OK'"\fR
+.TP
+.B Repository not found
+Check configuration: \fBgbare config\fR
+.TP
+.B Non-standard SSH port
+Set \fBGBARE_PORT\fR environment variable (e.g., \fBexport GBARE_PORT="2222"\fR)
+.SH SEE ALSO
+.BR git (1),
+.BR ssh (1),
+.BR git-init (1)
+.SH AUTHOR
+yumenomatayume
+.SH BUGS
+Report bugs at https://github.com/ymmmtym/gbare/issues
+.SH LICENSE
+MIT License
