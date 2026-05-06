@@ -126,16 +126,26 @@ echo "  Host: ${GBARE_HOST}"
 echo "  Port: ${GBARE_PORT:-(default)}"
 echo "  Path: ${GBARE_PATH}"
 
-# SSH接続テスト
+# SSH接続テスト（リトライ付き）
 echo ""
 print_info "Testing SSH connection to ${GBARE_HOST}..."
-_gbare_ssh "echo 'SSH connection successful'" >/dev/null 2>&1
-test_result $? "SSH connection to ${GBARE_HOST}"
+SSH_CONNECTED=0
+for i in $(seq 1 10); do
+  print_info "SSH connection attempt $i..."
+  _gbare_ssh "echo 'SSH connection successful'" >/dev/null 2>&1
+  if [[ $? -eq 0 ]]; then
+    SSH_CONNECTED=1
+    break
+  fi
+  sleep 3
+done
 
-if [[ $? -ne 0 ]]; then
+if [[ $SSH_CONNECTED -eq 0 ]]; then
+  print_error "SSH connection to ${GBARE_HOST} failed after 10 attempts"
   print_error "Cannot proceed without SSH connection"
   exit 1
 fi
+test_result 0 "SSH connection to ${GBARE_HOST}"
 
 # ========================================
 # Test 1: gbare help

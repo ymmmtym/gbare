@@ -83,10 +83,17 @@ jobs:
     
     - name: Wait for SSH server to be ready
       run: |
-        for i in $(seq 1 10); do
+        for i in $(seq 1 15); do
           echo "Attempt $i: Testing SSH connection..."
-          ssh -o LogLevel=ERROR -o ConnectTimeout=5 git@localhost "echo OK" 2>&1 && break
-          sleep 3
+          if ssh -o LogLevel=ERROR -o ConnectTimeout=5 -p 2222 git@localhost "echo OK" 2>&1; then
+            echo "SSH connection successful!"
+            break
+          fi
+          if [ $i -eq 15 ]; then
+            echo "SSH connection failed after 15 attempts"
+            exit 1
+          fi
+          sleep 5
         done
     
     - name: Run integration tests
