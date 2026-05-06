@@ -50,6 +50,11 @@ else
   exit 1
 fi
 
+# Override SSH check for integration tests (connection already verified in pre-flight)
+_gbare_check_ssh() {
+  return 0
+}
+
 TEST_DIR=$(mktemp -d)
 TEST_REPO_NAME="test-gbare-$(date +%s)"
 TOTAL_TESTS=0
