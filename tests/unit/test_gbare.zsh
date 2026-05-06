@@ -9,7 +9,7 @@ source "${SCRIPT_DIR}/tests/lib/test_framework.zsh"
 
 oneTimeSetUp() {
   source "${SCRIPT_DIR}/gbare.zsh"
-  
+
   export GBARE_USER="testuser"
   export GBARE_HOST="testhost"
   export GBARE_PORT=""
@@ -48,6 +48,7 @@ test_gbare_config_output() {
   assertContains "$output" "GBARE_HOST" "Config contains GBARE_HOST"
   assertContains "$output" "GBARE_PATH" "Config contains GBARE_PATH"
   assertContains "$output" "GBARE_SSH_TIMEOUT" "Config contains GBARE_SSH_TIMEOUT"
+  assertContains "$output" "GBARE_COLOR" "Config contains GBARE_COLOR"
 }
 
 test_gbare_config_values() {
@@ -75,6 +76,44 @@ test_gbare_warn_function() {
 test_gbare_ok_function() {
   local output=$(_gbare_ok "test success message")
   assertContains "$output" "test success message" "OK function outputs message"
+}
+
+# ========================================
+# Color Support Tests
+# ========================================
+
+test_gbare_color_enabled() {
+  GBARE_COLOR="true"
+  source "${SCRIPT_DIR}/gbare.zsh"
+  assertNotEquals "" "$GBARE_COLOR_GREEN" "Color should be enabled"
+}
+
+test_gbare_color_disabled() {
+  GBARE_COLOR="false"
+  source "${SCRIPT_DIR}/gbare.zsh"
+  assertEquals "" "$GBARE_COLOR_GREEN" "Color should be disabled when GBARE_COLOR=false"
+}
+
+# ========================================
+# Search Tests
+# ========================================
+
+test_gbare_search_usage() {
+  local output=$(_gbare_search 2>&1)
+  assertContains "$output" "Usage" "Search shows usage when no query"
+}
+
+# ========================================
+# Sync Tests
+# ========================================
+
+test_gbare_sync_usage() {
+  # sync should work with current directory name if no arg
+  # Just test it doesn't crash with no args in a non-git dir
+  cd /tmp
+  local output=$(_gbare_sync 2>&1)
+  assertContains "$output" "Not a git repository" "Sync fails in non-git dir"
+  cd "${SCRIPT_DIR}"
 }
 
 # ========================================
