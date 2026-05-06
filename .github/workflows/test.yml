@@ -85,16 +85,33 @@ jobs:
       run: |
         for i in $(seq 1 15); do
           echo "Attempt $i: Testing SSH connection..."
-          if ssh -o LogLevel=ERROR -o ConnectTimeout=5 -p 2222 git@localhost "echo OK" 2>&1; then
+          if ssh -o LogLevel=ERROR -o ConnectTimeout=5 -o StrictHostKeyChecking=no -p 2222 git@localhost "echo OK" 2>&1; then
             echo "SSH connection successful!"
             break
           fi
           if [ $i -eq 15 ]; then
             echo "SSH connection failed after 15 attempts"
+            echo "=== Docker container logs ==="
+            docker logs gbare-test-git-server 2>&1 | tail -50
+            echo "=== SSH server status ==="
+            docker exec gbare-test-git-server ps aux 2>&1 || true
+            echo "=== authorized_keys ==="
+            docker exec gbare-test-git-server cat /home/git/.ssh/authorized_keys 2>&1 | head -1 || true
+            echo "=== sshd_config (last 20 lines) ==="
+            docker exec gbare-test-git-server tail -20 /etc/ssh/sshd_config 2>&1 || true
             exit 1
           fi
           sleep 5
         done
+
+    - name: Verify SSH server health
+      run: |
+        echo "=== sshd process ==="
+        docker exec gbare-test-git-server ps aux | grep sshd || true
+        echo "=== authorized_keys exists ==="
+        docker exec gbare-test-git-server ls -la /home/git/.ssh/ || true
+        echo "=== /git-server/repos ==="
+        docker exec gbare-test-git-server ls -la /git-server/repos/ || true
     
     - name: Run integration tests
       shell: zsh {0}

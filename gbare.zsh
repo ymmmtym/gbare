@@ -37,7 +37,7 @@ fi
 
 # SSH コマンドを構築（ポート指定を適切に処理）
 _gbare_ssh() {
-  local ssh_opts="-o LogLevel=ERROR -o ConnectTimeout=${GBARE_SSH_TIMEOUT} -o ServerAliveInterval=5 -o ServerAliveCountMax=2"
+  local ssh_opts="-o LogLevel=ERROR -o ConnectTimeout=${GBARE_SSH_TIMEOUT} -o ServerAliveInterval=5 -o ServerAliveCountMax=2 -o StrictHostKeyChecking=no"
 
   if [[ -n "$GBARE_PORT" ]]; then
     ssh ${ssh_opts} -p ${GBARE_PORT} ${GBARE_USER}@${GBARE_HOST} "$@"
