@@ -1,3 +1,12 @@
+# 最小バージョンチェック（zsh 4.3以上が必要）
+if [[ -z "$ZSH_VERSION" ]] || {
+  local -a ver; ver=(${(s:.:)ZSH_VERSION})
+  (( ver[1] < 4 || (ver[1] == 4 && (ver[2] < 3)) ))
+}; then
+  echo "gbare requires zsh 4.3 or later (current: ${ZSH_VERSION:-unknown})" >&2
+  return 1 2>/dev/null || exit 1
+fi
+
 # ========================================
 # gbare - Bare Repository Manager
 # Manage bare Git repositories on remote servers

@@ -15,7 +15,7 @@ GitHub の `gh` CLI のように、シンプルなコマンドでベアリポジ
 
 ## 必要要件
 
-- zsh
+- zsh 4.3 以降
 - git
 - SSH アクセス可能なサーバー（Linux または Synology NAS など）
 
