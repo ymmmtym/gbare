@@ -5,14 +5,31 @@
 # Manage bare Git repositories on remote servers
 # ========================================
 
-# 設定（環境変数で上書き可能）
-: ${GBARE_USER:="yumenomatayume"}
-: ${GBARE_HOST:="nas"}
-: ${GBARE_PORT:=""}  # 空文字列がデフォルト（22を指定しない）
-: ${GBARE_PATH:="/volume1/homes/${GBARE_USER}/git"}
-: ${GBARE_COLOR:="true"}  # カラー出力を有効化
+# ========================================
+# Configuration
+# ========================================
 
-# カラー定義
+# GBARE_USER - SSH username for remote server
+# Default: "yumenomatayume"
+: ${GBARE_USER:="yumenomatayume"}
+
+# GBARE_HOST - Remote server hostname or IP address
+# Default: "nas"
+: ${GBARE_HOST:="nas"}
+
+# GBARE_PORT - SSH port number (empty string means default port 22)
+# Default: "" (uses SSH default port 22)
+: ${GBARE_PORT:=""}
+
+# GBARE_PATH - Base path for bare repositories on remote server
+# Default: "/volume1/homes/${GBARE_USER}/git"
+: ${GBARE_PATH:="/volume1/homes/${GBARE_USER}/git"}
+
+# GBARE_COLOR - Enable color output
+# Default: "true"
+: ${GBARE_COLOR:="true"}
+
+# Color definitions
 if [[ "$GBARE_COLOR" == "true" ]] && [[ -t 1 ]]; then
   GBARE_COLOR_RESET=$'\033[0m'
   GBARE_COLOR_RED=$'\033[0;31m'
@@ -35,7 +52,14 @@ fi
 # Helper Functions
 # ========================================
 
-# SSH コマンドを構築（ポート指定を適切に処理）
+# Execute command on remote server via SSH
+# Usage: _gbare_ssh <command>
+# Args:
+#   command - Shell command to execute on remote server
+# Returns:
+#   Exit status of remote command
+# Example:
+#   _gbare_ssh "git init --bare /path/to/repo.git"
 _gbare_ssh() {
   if [[ -n "$GBARE_PORT" ]]; then
     ssh -o LogLevel=ERROR -p ${GBARE_PORT} ${GBARE_USER}@${GBARE_HOST} "$@"
@@ -44,7 +68,15 @@ _gbare_ssh() {
   fi
 }
 
-# リモート URL を構築（ポート指定を適切に処理）
+# Build SSH URL for a remote repository
+# Usage: _gbare_remote_url <repo_name>
+# Args:
+#   repo_name - Name of the repository (without .git suffix)
+# Returns:
+#   Echoes the full SSH URL to the repository
+# Example:
+#   url=$(_gbare_remote_url "myproject")
+#   # => ssh://user@host/path/to/myproject.git
 _gbare_remote_url() {
   local repo_name=$1
   if [[ -n "$GBARE_PORT" ]]; then
@@ -58,12 +90,25 @@ _gbare_remote_url() {
 # Core Functions
 # ========================================
 
-# リポジトリ作成
+# Create a new bare repository on the remote server and optionally initialize local repo
+# Usage: _gbare_create [repo_name] [-y|--yes]
+# Args:
+#   repo_name       - Name for the repository (defaults to current directory name)
+#   -y, --yes       - Skip confirmation prompt
+# Returns:
+#   0 on success, 1 on failure
+# Side effects:
+#   - Creates bare repository on remote server
+#   - Initializes local git repo if not already initialized
+#   - Adds 'origin' remote pointing to the new repository
+# Example:
+#   _gbare_create                    # Uses current directory name with confirmation
+#   _gbare_create myproject -y       # Creates "myproject" without confirmation
 _gbare_create() {
   local repo_name=""
   local auto_yes=false
-  
-  # 引数をパース
+
+  # Parse arguments
   while [[ $# -gt 0 ]]; do
     case $1 in
       -y|--yes)
@@ -76,14 +121,14 @@ _gbare_create() {
         ;;
     esac
   done
-  
-  # 引数がなければカレントディレクトリ名を使用
+
+  # Use current directory name if no argument provided
   if [[ -z "$repo_name" ]]; then
     repo_name=$(basename "$PWD")
     echo "No repository name provided, using current directory name: ${repo_name}"
   fi
-  
-  # 確認
+
+  # Confirmation
   if [[ "$auto_yes" == false ]]; then
     echo ""
     echo "Creating bare repository:"
@@ -96,38 +141,38 @@ _gbare_create() {
     echo ""
     echo -n "Continue? (y/N): "
     read confirmation
-    
+
     if [[ ! "$confirmation" =~ ^[Yy]$ ]]; then
       echo "Cancelled"
       return 0
     fi
   fi
-  
+
   echo ""
   echo "Creating bare repository: ${repo_name}.git"
-  
-  # NAS/サーバー上にベアリポジトリを作成
+
+  # Create bare repository on server
   _gbare_ssh "git init --bare ${GBARE_PATH}/${repo_name}.git"
-  
+
   if [[ $? -eq 0 ]]; then
     echo "✓ Bare repository created on ${GBARE_HOST}"
-    
-    # ローカルをgit init（既存のリポジトリでなければ）
+
+    # Initialize local repo if not already a git repo
     if [[ ! -d .git ]]; then
       git init
       echo "✓ Local repository initialized"
     fi
-    
-    # リモートを追加
+
+    # Add remote
     local remote_url=$(_gbare_remote_url "${repo_name}")
     git remote add origin ${remote_url} 2>/dev/null
-    
+
     if [[ $? -eq 0 ]]; then
       echo "✓ Remote 'origin' added"
     else
       echo "⚠ Remote 'origin' already exists"
     fi
-    
+
     echo ""
     echo "Repository URL: ${remote_url}"
     echo ""
@@ -141,37 +186,56 @@ _gbare_create() {
   fi
 }
 
-# リポジトリ一覧
+# List all bare repositories on the remote server
+# Usage: _gbare_list
+# Returns:
+#   0 on success, 1 on failure
+# Output:
+#   Prints list of repository names (without .git suffix)
+# Example:
+#   _gbare_list
+#   # => Bare repositories on nas:
+#   # =>   • project1
+#   # =>   • project2
 _gbare_list() {
   echo "Bare repositories on ${GBARE_HOST}:"
   echo ""
-  
+
   local repos=$(_gbare_ssh "ls -1d ${GBARE_PATH}/*.git 2>/dev/null" 2>/dev/null)
-  
+
   if [[ -z "$repos" ]]; then
     echo "No repositories found"
     return 0
   fi
-  
+
   echo "$repos" | sed 's/.*\///' | sed 's/\.git$//' | while read repo; do
     echo "  • $repo"
   done
 }
 
-# リポジトリクローン
+# Clone a repository from the remote server
+# Usage: _gbare_clone <repo_name> [target_dir]
+# Args:
+#   repo_name  - Name of the repository to clone (required)
+#   target_dir - Directory to clone into (optional, defaults to repo name)
+# Returns:
+#   0 on success, 1 if repo_name is not provided
+# Example:
+#   _gbare_clone myproject                  # Clones to ./myproject/
+#   _gbare_clone myproject ~/work/project   # Clones to specified directory
 _gbare_clone() {
   local repo_name=$1
   local target_dir=$2
-  
+
   if [[ -z "$repo_name" ]]; then
     echo "Usage: gbare clone <repository-name> [directory]"
     return 1
   fi
-  
+
   local remote_url=$(_gbare_remote_url "${repo_name}")
-  
+
   echo "Cloning from: ${remote_url}"
-  
+
   if [[ -n "$target_dir" ]]; then
     git clone ${remote_url} ${target_dir}
   else
@@ -179,24 +243,36 @@ _gbare_clone() {
   fi
 }
 
-# リポジトリ削除
+# Delete a repository from the remote server
+# Usage: _gbare_delete <repo_name>
+# Args:
+#   repo_name - Name of the repository to delete (required)
+# Returns:
+#   0 on success, 1 if repo_name is not provided or deletion fails
+# Note:
+#   Requires typing the repository name for confirmation to prevent accidental deletion
+# Example:
+#   _gbare_delete myproject
+#   # => WARNING: This will permanently delete myproject.git from nas
+#   # => Type repository name to confirm: myproject
+#   # => Repository deleted: myproject.git
 _gbare_delete() {
   local repo_name=$1
-  
+
   if [[ -z "$repo_name" ]]; then
     echo "Usage: gbare delete <repository-name>"
     return 1
   fi
-  
+
   echo "⚠️  WARNING: This will permanently delete ${repo_name}.git from ${GBARE_HOST}"
   echo "  Path: ${GBARE_PATH}/${repo_name}.git"
   echo ""
   echo -n "Type repository name to confirm: "
   read confirmation
-  
+
   if [[ "$confirmation" == "$repo_name" ]]; then
     _gbare_ssh "rm -rf ${GBARE_PATH}/${repo_name}.git"
-    
+
     if [[ $? -eq 0 ]]; then
       echo "✓ Repository deleted: ${repo_name}.git"
     else
@@ -208,54 +284,90 @@ _gbare_delete() {
   fi
 }
 
-# リポジトリ情報
+# Show information about a repository on the remote server
+# Usage: _gbare_info <repo_name>
+# Args:
+#   repo_name - Name of the repository (required)
+# Returns:
+#   0 on success, 1 if repo_name is not provided
+# Output:
+#   Prints repository name, server, port (if configured), SSH URL, and branches/tags
+# Example:
+#   _gbare_info myproject
+#   # => Repository: myproject.git
+#   # => Server: nas
+#   # => SSH URL: ssh://user@nas/path/myproject.git
+#   # => Branches and tags:
 _gbare_info() {
   local repo_name=$1
-  
+
   if [[ -z "$repo_name" ]]; then
     echo "Usage: gbare info <repository-name>"
     return 1
   fi
-  
+
   local remote_url=$(_gbare_remote_url "${repo_name}")
-  
+
   echo "Repository: ${repo_name}.git"
   echo "Server: ${GBARE_HOST}"
   if [[ -n "$GBARE_PORT" ]]; then
     echo "Port: ${GBARE_PORT}"
   fi
   echo "SSH URL: ${remote_url}"
-  
+
   if command -v git >/dev/null 2>&1; then
     echo ""
     echo "Branches and tags:"
     _gbare_ssh "cd ${GBARE_PATH}/${repo_name}.git && git show-ref 2>/dev/null" 2>/dev/null
-    
+
     if [[ $? -ne 0 ]]; then
       echo "  (empty repository or connection failed)"
     fi
   fi
 }
 
-# リモートURL取得（既存リポジトリ用）
+# Get the SSH URL for a repository
+# Usage: _gbare_url <repo_name>
+# Args:
+#   repo_name - Name of the repository (required)
+# Returns:
+#   0 on success, 1 if repo_name is not provided
+# Output:
+#   Echoes the SSH URL for the repository
+# Example:
+#   _gbare_url myproject
+#   # => ssh://user@nas/path/myproject.git
 _gbare_url() {
   local repo_name=$1
-  
+
   if [[ -z "$repo_name" ]]; then
     echo "Usage: gbare url <repository-name>"
     return 1
   fi
-  
+
   _gbare_remote_url "${repo_name}"
 }
 
-# 既存ローカルリポジトリにリモート追加
+# Add a remote to an existing local git repository
+# Usage: _gbare_remote [repo_name] [remote_name] [-y|--yes]
+# Args:
+#   repo_name    - Name of the remote repository (defaults to current directory name)
+#   remote_name  - Name for the remote (defaults to "origin")
+#   -y, --yes    - Skip confirmation prompt
+# Returns:
+#   0 on success, 1 if not in a git repository or remote already exists
+# Prerequisites:
+#   Current directory must be a git repository (have .git directory)
+# Example:
+#   _gbare_remote                    # Uses current dir name, adds as "origin"
+#   _gbare_remote myproject upstream # Adds as "upstream" remote
+#   _gbare_remote -y                 # Skips confirmation
 _gbare_remote() {
   local repo_name=""
   local remote_name="origin"
   local auto_yes=false
-  
-  # 引数をパース
+
+  # Parse arguments
   while [[ $# -gt 0 ]]; do
     case $1 in
       -y|--yes)
@@ -272,21 +384,21 @@ _gbare_remote() {
         ;;
     esac
   done
-  
-  # 引数がなければカレントディレクトリ名を使用
+
+  # Use current directory name if no argument provided
   if [[ -z "$repo_name" ]]; then
     repo_name=$(basename "$PWD")
     echo "No repository name provided, using current directory name: ${repo_name}"
   fi
-  
+
   if [[ ! -d .git ]]; then
     echo "✗ Not a git repository (no .git directory found)"
     return 1
   fi
-  
+
   local remote_url=$(_gbare_remote_url "${repo_name}")
-  
-  # 確認
+
+  # Confirmation
   if [[ "$auto_yes" == false ]]; then
     echo ""
     echo "Adding remote:"
@@ -296,15 +408,15 @@ _gbare_remote() {
     echo ""
     echo -n "Continue? (y/N): "
     read confirmation
-    
+
     if [[ ! "$confirmation" =~ ^[Yy]$ ]]; then
       echo "Cancelled"
       return 0
     fi
   fi
-  
+
   git remote add ${remote_name} ${remote_url}
-  
+
   if [[ $? -eq 0 ]]; then
     echo "✓ Remote '${remote_name}' added: ${remote_url}"
   else
@@ -313,7 +425,19 @@ _gbare_remote() {
   fi
 }
 
-# 設定表示
+# Display the current gbare configuration
+# Usage: _gbare_config
+# Returns:
+#   Always returns 0
+# Output:
+#   Prints current values of GBARE_USER, GBARE_HOST, GBARE_PORT, and GBARE_PATH
+# Example:
+#   _gbare_config
+#   # => gbare configuration:
+#   # =>   GBARE_USER: user
+#   # =>   GBARE_HOST: nas
+#   # =>   GBARE_PORT: (default)
+#   # =>   GBARE_PATH: /volume1/homes/user/git
 _gbare_config() {
   echo "gbare configuration:"
   echo ""
@@ -330,7 +454,18 @@ _gbare_config() {
 # New Features
 # ========================================
 
-# リポジトリ同期（ローカル→リモート）
+# Sync local repository with remote (local → remote)
+# Usage: _gbare_sync [repo_name] [remote_name]
+# Args:
+#   repo_name   - Name of the repository (defaults to current directory name)
+#   remote_name - Name of the remote (defaults to "origin")
+# Returns:
+#   0 on success, 1 on failure
+# Prerequisites:
+#   Current directory must be a git repository
+# Example:
+#   _gbare_sync                    # Sync current repo with origin
+#   _gbare_sync myproject upstream # Sync with upstream remote
 _gbare_sync() {
   local repo_name=$1
   local remote_name=${2:-origin}
@@ -371,7 +506,17 @@ _gbare_sync() {
   fi
 }
 
-# リポジトリバックアップ
+# Backup all repositories to local directory
+# Usage: _gbare_backup [backup_dir]
+# Args:
+#   backup_dir - Directory to store backups (default: "${HOME}/gbare_backups")
+# Returns:
+#   0 on success
+# Output:
+#   Creates mirrored clones of all remote repositories in timestamped subdirectory
+# Example:
+#   _gbare_backup                  # Backup to ~/gbare_backups
+#   _gbare_backup ~/my_backups     # Backup to specified directory
 _gbare_backup() {
   local backup_dir=${1:-"${HOME}/gbare_backups"}
   local timestamp=$(date +%Y%m%d_%H%M%S)
@@ -408,7 +553,17 @@ _gbare_backup() {
   echo "${GBARE_COLOR_GREEN}✓ Backup completed: ${backup_dir}/${timestamp}${GBARE_COLOR_RESET}"
 }
 
-# リポジトリ検索
+# Search repositories by name
+# Usage: _gbare_search <query>
+# Args:
+#   query - Search string (case-insensitive substring match)
+# Returns:
+#   0 on success, 1 if query is not provided
+# Output:
+#   Prints matching repository names
+# Example:
+#   _gbare_search myproject
+#   # =>   • myproject
 _gbare_search() {
   local query=$1
 
@@ -444,10 +599,32 @@ _gbare_search() {
 # Main Command (subcommand style)
 # ========================================
 
+# Main entry point for gbare commands
+# Dispatches subcommands to appropriate handler functions
+# Usage: gbare <command> [args...]
+# Commands:
+#   create, c     - Create a new bare repository
+#   list, ls, l   - List all repositories
+#   clone, cl     - Clone a repository
+#   delete, rm, d - Delete a repository
+#   info, i       - Show repository information
+#   url, u        - Get repository SSH URL
+#   remote, r     - Add remote to existing local repo
+#   sync, s       - Sync local repo with remote
+#   backup, b     - Backup all repositories
+#   search, se    - Search repositories by name
+#   config, cfg   - Show current configuration
+#   help, h       - Show help message
+# Returns:
+#   0 on success, 1 on unknown command
+# Example:
+#   gbare create myproject
+#   gbare list
+#   gbare help
 gbare() {
   local cmd=$1
   shift
-  
+
   case "$cmd" in
     create|c)
       _gbare_create "$@"
@@ -470,9 +647,6 @@ gbare() {
     remote|r)
       _gbare_remote "$@"
       ;;
-    config|cfg)
-      _gbare_config "$@"
-      ;;
     sync|s)
       _gbare_sync "$@"
       ;;
@@ -481,6 +655,9 @@ gbare() {
       ;;
     search|se)
       _gbare_search "$@"
+      ;;
+    config|cfg)
+      _gbare_config "$@"
       ;;
     help|h|--help|-h|"")
       echo "gbare - Bare Repository Manager"
@@ -542,24 +719,37 @@ gbare() {
 }
 
 # ========================================
-# Completion
+# Zsh Completion
 # ========================================
 
-# リポジトリリスト取得（補完用）
+# Fetch repository list from remote server for use in tab completion
+# Usage: _gbare_repos
+# Returns:
+#   Populates completion candidates with repository names
+# Note:
+#   This function is called internally by zsh completion system
 _gbare_repos() {
   local repos
   repos=(${(f)"$(_gbare_ssh "ls -1d ${GBARE_PATH}/*.git 2>/dev/null" 2>/dev/null | sed 's/.*\///' | sed 's/\.git$//')"})
   _describe 'repository' repos
 }
 
-# メイン補完関数
+# Main zsh completion function for gbare command
+# Provides tab completion for gbare subcommands and arguments
+# Usage: (called by zsh completion system)
+# Completion behavior:
+#   - First tab: shows available subcommands
+#   - Second tab (for clone/delete/info/url/search): shows repository names from server
+#   - Second tab (for create/remote/sync): no completion (uses current directory name)
+# Registers with:
+#   compdef _gbare gbare
 _gbare() {
   local line state
-  
+
   _arguments -C \
     "1: :->cmds" \
     "*::arg:->args"
-  
+
   case "$state" in
     cmds)
       _values "gbare command" \
@@ -582,7 +772,7 @@ _gbare() {
           _gbare_repos
           ;;
         create|c|remote|r|sync|s)
-          # create, remote, sync はオプショナルなので補完しない（カレントディレクトリ名を使う）
+          # create, remote, sync use current directory name by default
           ;;
       esac
       ;;
@@ -595,5 +785,6 @@ compdef _gbare gbare
 # Initialization
 # ========================================
 
-# プラグイン読み込み時のメッセージ（オプション）
+# Plugin loading is silent by default.
+# To enable a startup message, uncomment the following line:
 # echo "gbare loaded (server: ${GBARE_HOST})"

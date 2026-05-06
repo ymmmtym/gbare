@@ -9,7 +9,7 @@ source "${SCRIPT_DIR}/tests/lib/test_framework.zsh"
 
 oneTimeSetUp() {
   source "${SCRIPT_DIR}/gbare.zsh"
-  
+
   export GBARE_USER="testuser"
   export GBARE_HOST="testhost"
   export GBARE_PORT=""
