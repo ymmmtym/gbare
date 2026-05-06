@@ -14,6 +14,10 @@ oneTimeSetUp() {
   export GBARE_HOST="testhost"
   export GBARE_PORT=""
   export GBARE_PATH="/test/git"
+  
+  # Override SSH check functions for unit tests (no real SSH server available)
+  _gbare_check_ssh() { return 0; }
+  _gbare_check_repo_exists() { return 0; }
 }
 
 # ========================================

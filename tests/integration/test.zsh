@@ -50,6 +50,11 @@ else
   exit 1
 fi
 
+# Override SSH check for integration tests (connection already verified in pre-flight)
+_gbare_check_ssh() {
+  return 0
+}
+
 TEST_DIR=$(mktemp -d)
 TEST_REPO_NAME="test-gbare-$(date +%s)"
 TOTAL_TESTS=0
@@ -121,16 +126,27 @@ echo "  Host: ${GBARE_HOST}"
 echo "  Port: ${GBARE_PORT:-(default)}"
 echo "  Path: ${GBARE_PATH}"
 
-# SSH接続テスト
+# SSH接続テスト（リトライ付き）
 echo ""
 print_info "Testing SSH connection to ${GBARE_HOST}..."
-_gbare_ssh "echo 'SSH connection successful'" >/dev/null 2>&1
-test_result $? "SSH connection to ${GBARE_HOST}"
+SSH_CONNECTED=0
+for i in $(seq 1 15); do
+  print_info "SSH connection attempt $i..."
+  output=$(_gbare_ssh "echo 'SSH connection successful'" 2>&1)
+  if [[ $? -eq 0 ]]; then
+    SSH_CONNECTED=1
+    break
+  fi
+  print_info "Attempt $i failed: $output"
+  sleep 5
+done
 
-if [[ $? -ne 0 ]]; then
+if [[ $SSH_CONNECTED -eq 0 ]]; then
+  print_error "SSH connection to ${GBARE_HOST} failed after 15 attempts"
   print_error "Cannot proceed without SSH connection"
   exit 1
 fi
+test_result 0 "SSH connection to ${GBARE_HOST}"
 
 # ========================================
 # Test 1: gbare help
