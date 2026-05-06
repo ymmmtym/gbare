@@ -5,11 +5,230 @@
 # Manage bare Git repositories on remote servers
 # ========================================
 
-# 設定（環境変数で上書き可能）
+# ========================================
+# Configuration
+# ========================================
+
+# 設定ファイルのパス
+GBARE_CONFIG_FILE="${GBARE_CONFIG_FILE:-${HOME}/.config/gbare/config}"
+
+# デフォルト設定（環境変数で上書き可能）
 : ${GBARE_USER:="yumenomatayume"}
 : ${GBARE_HOST:="nas"}
 : ${GBARE_PORT:=""}  # 空文字列がデフォルト（22を指定しない）
 : ${GBARE_PATH:="/volume1/homes/${GBARE_USER}/git"}
+: ${GBARE_PROFILE:="default"}
+
+# ========================================
+# Config File Loading
+# ========================================
+
+# 設定ファイルを読み込む
+_gbare_load_config() {
+  local config_file="${GBARE_CONFIG_FILE}"
+  local current_profile="default"
+  local target_profile="${GBARE_PROFILE}"
+  local has_profiles=false
+  
+  if [[ ! -f "$config_file" ]]; then
+    return 0
+  fi
+  
+  # 最初にプロファイルセクションが存在するか確認
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%%#*}"
+    line="${line## }"
+    [[ -z "$line" ]] && continue
+    if [[ "$line" =~ ^\[([a-zA-Z0-9_-]+)\]$ ]]; then
+      has_profiles=true
+      break
+    fi
+  done < "$config_file"
+  
+  # プロファイルセクションがない場合はファイル全体をdefaultとして扱う
+  if [[ "$has_profiles" == false ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      line="${line%%#*}"
+      line="${line## }"
+      line="${line%% }"
+      [[ -z "$line" ]] && continue
+      
+      if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+        local key="${match[1]}"
+        local value="${match[2]}"
+        value="${value%% }"
+        
+        case "$key" in
+          GBARE_USER) export GBARE_USER="$value" ;;
+          GBARE_HOST) export GBARE_HOST="$value" ;;
+          GBARE_PORT) export GBARE_PORT="$value" ;;
+          GBARE_PATH) export GBARE_PATH="$value" ;;
+        esac
+      fi
+    done < "$config_file"
+    return 0
+  fi
+  
+  # プロファイルセクションがある場合の処理
+  local in_target_profile=false
+  
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    # コメント行と空行をスキップ
+    line="${line%%#*}"
+    line="${line## }"
+    line="${line%% }"
+    [[ -z "$line" ]] && continue
+    
+    # プロファイルセクションの判定
+    if [[ "$line" =~ ^\[([a-zA-Z0-9_-]+)\]$ ]]; then
+      current_profile="${match[1]}"
+      if [[ "$current_profile" == "$target_profile" ]]; then
+        in_target_profile=true
+      else
+        in_target_profile=false
+      fi
+      continue
+    fi
+    
+    # キー=値のペアをパース（ターゲットプロファイルのみ）
+    if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+      local key="${match[1]}"
+      local value="${match[2]}"
+      value="${value%% }"
+      
+      if [[ "$in_target_profile" == true ]]; then
+        case "$key" in
+          GBARE_USER) export GBARE_USER="$value" ;;
+          GBARE_HOST) export GBARE_HOST="$value" ;;
+          GBARE_PORT) export GBARE_PORT="$value" ;;
+          GBARE_PATH) export GBARE_PATH="$value" ;;
+        esac
+      fi
+    fi
+  done < "$config_file"
+  
+  return 0
+}
+
+# 設定をバリデーション
+_gbare_validate_settings() {
+  local errors=()
+  
+  if [[ -z "$GBARE_USER" ]]; then
+    errors+=("GBARE_USER is required")
+  fi
+  
+  if [[ -z "$GBARE_HOST" ]]; then
+    errors+=("GBARE_HOST is required")
+  fi
+  
+  if [[ -z "$GBARE_PATH" ]]; then
+    errors+=("GBARE_PATH is required")
+  fi
+  
+  if [[ -n "$GBARE_PORT" ]]; then
+    if ! [[ "$GBARE_PORT" =~ ^[0-9]+$ ]]; then
+      errors+=("GBARE_PORT must be a number")
+    elif [[ "$GBARE_PORT" -lt 1 || "$GBARE_PORT" -gt 65535 ]]; then
+      errors+=("GBARE_PORT must be between 1 and 65535")
+    fi
+  fi
+  
+  if [[ ${#errors[@]} -gt 0 ]]; then
+    echo "Configuration errors:"
+    for error in "${errors[@]}"; do
+      echo "  - $error"
+    done
+    return 1
+  fi
+  
+  return 0
+}
+
+# プロファイル一覧を取得
+_gbare_list_profiles() {
+  local config_file="${GBARE_CONFIG_FILE}"
+  
+  if [[ ! -f "$config_file" ]]; then
+    echo "No config file found at: ${config_file}"
+    return 1
+  fi
+  
+  echo "Available profiles:"
+  echo ""
+  
+  local profiles=()
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ ^\[([a-zA-Z0-9_-]+)\]$ ]]; then
+      profiles+=("${match[1]}")
+    fi
+  done < "$config_file"
+  
+  if [[ ${#profiles[@]} -eq 0 ]]; then
+    echo "  (no profiles defined)"
+  else
+    for profile in "${profiles[@]}"; do
+      if [[ "$profile" == "$GBARE_PROFILE" ]]; then
+        echo "  * $profile (active)"
+      else
+        echo "  - $profile"
+      fi
+    done
+  fi
+}
+
+# プロファイル設定を表示
+_gbare_show_profile() {
+  local profile_name="${1:-$GBARE_PROFILE}"
+  local config_file="${GBARE_CONFIG_FILE}"
+  
+  if [[ ! -f "$config_file" ]]; then
+    echo "No config file found at: ${config_file}"
+    return 1
+  fi
+  
+  local in_profile=false
+  local found=false
+  local settings=()
+  
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ ^\[([a-zA-Z0-9_-]+)\]$ ]]; then
+      if [[ "${match[1]}" == "$profile_name" ]]; then
+        in_profile=true
+        found=true
+        continue
+      else
+        if [[ "$in_profile" == true ]]; then
+          break
+        fi
+      fi
+    fi
+    
+    if [[ "$in_profile" == true ]]; then
+      line="${line%%#*}"
+      line="${line## }"
+      [[ -z "$line" ]] && continue
+      if [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+        settings+=("$line")
+      fi
+    fi
+  done < "$config_file"
+  
+  if [[ "$found" == false ]]; then
+    echo "Profile not found: ${profile_name}"
+    return 1
+  fi
+  
+  echo "Profile: ${profile_name}"
+  echo ""
+  if [[ ${#settings[@]} -eq 0 ]]; then
+    echo "  (no settings)"
+  else
+    for setting in "${settings[@]}"; do
+      echo "  $setting"
+    done
+  fi
+}
 
 # ========================================
 # Helper Functions
@@ -297,12 +516,22 @@ _gbare_remote() {
 _gbare_config() {
   echo "gbare configuration:"
   echo ""
+  echo "  Config file: ${GBARE_CONFIG_FILE}"
+  if [[ -f "$GBARE_CONFIG_FILE" ]]; then
+    echo "  Config file status: found"
+  else
+    echo "  Config file status: not found"
+  fi
+  echo "  Active profile: ${GBARE_PROFILE}"
+  echo ""
   echo "  GBARE_USER: ${GBARE_USER}"
   echo "  GBARE_HOST: ${GBARE_HOST}"
   echo "  GBARE_PORT: ${GBARE_PORT:-"(default)"}"
   echo "  GBARE_PATH: ${GBARE_PATH}"
   echo ""
-  echo "Set these in your ~/.zshrc or Sheldon plugins.toml"
+  echo "Set these in your ~/.zshrc, Sheldon plugins.toml, or config file"
+  echo ""
+  echo "Use 'gbare profiles' to list available profiles"
 }
 
 # ========================================
@@ -310,6 +539,12 @@ _gbare_config() {
 # ========================================
 
 gbare() {
+  # 設定ファイルを読み込み（初回のみ）
+  if [[ -z "${_GBARE_CONFIG_LOADED}" ]]; then
+    _gbare_load_config
+    export _GBARE_CONFIG_LOADED=true
+  fi
+  
   local cmd=$1
   shift
   
@@ -338,6 +573,15 @@ gbare() {
     config|cfg)
       _gbare_config "$@"
       ;;
+    profiles|pl)
+      _gbare_list_profiles "$@"
+      ;;
+    profile|p)
+      _gbare_show_profile "$@"
+      ;;
+    validate|v)
+      _gbare_validate_settings
+      ;;
     help|h|--help|-h|"")
       echo "gbare - Bare Repository Manager"
       echo ""
@@ -359,13 +603,20 @@ gbare() {
       echo "                                   (uses current directory name if not specified)"
       echo "                                   -y, --yes: Skip confirmation prompt"
       echo "  config, cfg                      Show current configuration"
+      echo "  profiles, pl                     List available profiles"
+      echo "  profile, p    [name]             Show profile settings"
+      echo "  validate, v                      Validate configuration"
       echo "  help, h                          Show this help"
       echo ""
-      echo "Configuration (set in ~/.zshrc or Sheldon):"
+      echo "Configuration (set in ~/.zshrc, Sheldon, or config file):"
       echo "  GBARE_USER  - SSH username (default: yumenomatayume)"
       echo "  GBARE_HOST  - Server hostname or IP (default: nas)"
       echo "  GBARE_PORT  - SSH port (optional, defaults to 22)"
       echo "  GBARE_PATH  - Path to git repositories (default: /volume1/homes/\${GBARE_USER}/git)"
+      echo "  GBARE_PROFILE - Active profile name (default: default)"
+      echo ""
+      echo "Config file: ~/.config/gbare/config"
+      echo "  Format: INI-style with [profile_name] sections"
       echo ""
       echo "Examples:"
       echo "  gbare create                     # Create repo with current dir name"
@@ -379,6 +630,9 @@ gbare() {
       echo "  gbare remote myproject           # Add remote to current repo"
       echo "  gbare remote myproject origin -y # Add remote without confirmation"
       echo "  gbare url myproject              # Get SSH URL"
+      echo "  gbare profiles                   # List available profiles"
+      echo "  gbare profile home               # Show 'home' profile settings"
+      echo "  GBARE_PROFILE=work gbare create  # Use 'work' profile"
       ;;
     *)
       echo "Unknown command: $cmd"
@@ -418,6 +672,9 @@ _gbare() {
         "url[Get repository SSH URL]" \
         "remote[Add remote to existing local repo]" \
         "config[Show current configuration]" \
+        "profiles[List available profiles]" \
+        "profile[Show profile settings]" \
+        "validate[Validate configuration]" \
         "help[Show help]"
       ;;
     args)
