@@ -28,6 +28,10 @@ GBARE_CONFIG_FILE="${GBARE_CONFIG_FILE:-${HOME}/.config/gbare/config}"
 # Default: "/volume1/homes/${GBARE_USER}/git"
 : ${GBARE_PATH:="/volume1/homes/${GBARE_USER}/git"}
 
+# GBARE_SSH_TIMEOUT - SSH connection timeout in seconds
+# Default: "10"
+: ${GBARE_SSH_TIMEOUT:="10"}
+
 # GBARE_PROFILE - Active profile name for config file selection
 # Default: "default"
 : ${GBARE_PROFILE:="default"}
@@ -306,6 +310,63 @@ _gbare_show_profile() {
 }
 
 # ========================================
+# Error Handling
+# ========================================
+
+# Print error message to stderr
+_gbare_error() {
+  echo "✗ ERROR: $1" >&2
+}
+
+# Check SSH connectivity (with timeout)
+_gbare_check_ssh() {
+  local output
+  if [[ -n "$GBARE_PORT" ]]; then
+    output=$(ssh -o LogLevel=ERROR -o ConnectTimeout=${GBARE_SSH_TIMEOUT} -o ServerAliveInterval=5 -p ${GBARE_PORT} ${GBARE_USER}@${GBARE_HOST} "echo OK" 2>&1)
+  else
+    output=$(ssh -o LogLevel=ERROR -o ConnectTimeout=${GBARE_SSH_TIMEOUT} -o ServerAliveInterval=5 ${GBARE_USER}@${GBARE_HOST} "echo OK" 2>&1)
+  fi
+  local exit_code=$?
+
+  if [[ $exit_code -ne 0 ]]; then
+    _gbare_error "SSH connection failed to ${GBARE_USER}@${GBARE_HOST}"
+    if [[ $exit_code -eq 255 ]]; then
+      _gbare_error "Connection refused or timed out (timeout: ${GBARE_SSH_TIMEOUT}s)"
+    fi
+    return 1
+  fi
+
+  if [[ "$output" != "OK" ]]; then
+    _gbare_error "SSH connection failed: unexpected response"
+    return 1
+  fi
+
+  return 0
+}
+
+# Check whether remote repository exists
+# Returns: 0 exists, 1 not exists, 2 check failed
+_gbare_repo_exists() {
+  local repo_name=$1
+  local remote_path="${GBARE_PATH}/${repo_name}.git"
+
+  local output
+  output=$(_gbare_ssh "test -d ${remote_path} && echo EXISTS" 2>&1)
+  local exit_code=$?
+
+  if [[ $exit_code -ne 0 ]]; then
+    _gbare_error "Failed to check repository existence (SSH error)"
+    return 2
+  fi
+
+  if [[ "$output" == *"EXISTS"* ]]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+# ========================================
 # Helper Functions
 # ========================================
 
@@ -318,11 +379,11 @@ _gbare_show_profile() {
 # Example:
 #   _gbare_ssh "git init --bare /path/to/repo.git"
 _gbare_ssh() {
+  local ssh_opts="-o LogLevel=ERROR"
   if [[ -n "$GBARE_PORT" ]]; then
-    ssh -o LogLevel=ERROR -p ${GBARE_PORT} ${GBARE_USER}@${GBARE_HOST} "$@"
-  else
-    ssh -o LogLevel=ERROR ${GBARE_USER}@${GBARE_HOST} "$@"
+    ssh_opts="${ssh_opts} -p ${GBARE_PORT}"
   fi
+  ssh ${ssh_opts} ${GBARE_USER}@${GBARE_HOST} "$@"
 }
 
 # Build SSH URL for a remote repository
@@ -385,6 +446,17 @@ _gbare_create() {
     echo "No repository name provided, using current directory name: ${repo_name}"
   fi
 
+  # SSH接続確認
+  if ! _gbare_check_ssh; then
+    return 1
+  fi
+
+  # リポジトリの存在確認
+  if _gbare_repo_exists "$repo_name"; then
+    _gbare_error "Repository '${repo_name}.git' already exists on ${GBARE_HOST}"
+    return 1
+  fi
+
   # Confirmation
   if [[ "$auto_yes" == false ]]; then
     echo ""
@@ -409,20 +481,27 @@ _gbare_create() {
   echo "Creating bare repository: ${repo_name}.git"
 
   # Create bare repository on server
-  _gbare_ssh "git init --bare ${GBARE_PATH}/${repo_name}.git"
+  local output
+  output=$(_gbare_ssh "git init --bare ${GBARE_PATH}/${repo_name}.git" 2>&1)
+  local exit_code=$?
 
-  if [[ $? -eq 0 ]]; then
+  if [[ $exit_code -eq 0 ]]; then
     echo "✓ Bare repository created on ${GBARE_HOST}"
 
     # Initialize local repo if not already a git repo
     if [[ ! -d .git ]]; then
-      git init
-      echo "✓ Local repository initialized"
+      git init >/dev/null 2>&1
+      if [[ $? -eq 0 ]]; then
+        echo "✓ Local repository initialized"
+      else
+        _gbare_error "Failed to initialize local repository"
+        return 1
+      fi
     fi
 
     # Add remote
     local remote_url=$(_gbare_remote_url "${repo_name}")
-    git remote add origin ${remote_url} 2>/dev/null
+    git remote add origin "${remote_url}" 2>/dev/null
 
     if [[ $? -eq 0 ]]; then
       echo "✓ Remote 'origin' added"
@@ -438,7 +517,10 @@ _gbare_create() {
     echo "  git commit -m 'first commit'"
     echo "  git push -u origin main"
   else
-    echo "✗ Failed to create repository"
+    _gbare_error "Failed to create repository on ${GBARE_HOST}"
+    if [[ -n "$output" ]]; then
+      echo "  Details: $output" >&2
+    fi
     return 1
   fi
 }
@@ -455,17 +537,29 @@ _gbare_create() {
 #   # =>   • project1
 #   # =>   • project2
 _gbare_list() {
+  # SSH接続確認
+  if ! _gbare_check_ssh; then
+    return 1
+  fi
+
   echo "Bare repositories on ${GBARE_HOST}:"
   echo ""
 
-  local repos=$(_gbare_ssh "ls -1d ${GBARE_PATH}/*.git 2>/dev/null" 2>/dev/null)
+  local output
+  output=$(_gbare_ssh "ls -1d ${GBARE_PATH}/*.git 2>/dev/null" 2>&1)
+  local exit_code=$?
 
-  if [[ -z "$repos" ]]; then
+  if [[ $exit_code -ne 0 ]]; then
+    _gbare_error "Failed to list repositories on ${GBARE_HOST}"
+    return 1
+  fi
+
+  if [[ -z "$output" ]]; then
     echo "No repositories found"
     return 0
   fi
 
-  echo "$repos" | sed 's/.*\///' | sed 's/\.git$//' | while read repo; do
+  echo "$output" | sed 's/.*\///' | sed 's/\.git$//' | while read repo; do
     echo "  • $repo"
   done
 }
@@ -489,14 +583,40 @@ _gbare_clone() {
     return 1
   fi
 
+  # SSH接続確認
+  if ! _gbare_check_ssh; then
+    return 1
+  fi
+
+  # リポジトリの存在確認
+  if ! _gbare_repo_exists "$repo_name"; then
+    local check_rc=$?
+    if [[ $check_rc -eq 2 ]]; then
+      _gbare_error "Unable to verify repository existence"
+    else
+      _gbare_error "Repository '${repo_name}.git' does not exist on ${GBARE_HOST}"
+    fi
+    return 1
+  fi
+
   local remote_url=$(_gbare_remote_url "${repo_name}")
 
   echo "Cloning from: ${remote_url}"
 
+  local clone_output
   if [[ -n "$target_dir" ]]; then
-    git clone ${remote_url} ${target_dir}
+    clone_output=$(git clone "${remote_url}" "${target_dir}" 2>&1)
   else
-    git clone ${remote_url}
+    clone_output=$(git clone "${remote_url}" 2>&1)
+  fi
+  local exit_code=$?
+
+  if [[ $exit_code -ne 0 ]]; then
+    _gbare_error "Failed to clone repository"
+    if [[ -n "$clone_output" ]]; then
+      echo "  Details: $clone_output" >&2
+    fi
+    return 1
   fi
 }
 
@@ -521,6 +641,22 @@ _gbare_delete() {
     return 1
   fi
 
+  # SSH接続確認
+  if ! _gbare_check_ssh; then
+    return 1
+  fi
+
+  # リポジトリの存在確認
+  if ! _gbare_repo_exists "$repo_name"; then
+    local check_rc=$?
+    if [[ $check_rc -eq 2 ]]; then
+      _gbare_error "Unable to verify repository existence"
+    else
+      _gbare_error "Repository '${repo_name}.git' does not exist on ${GBARE_HOST}"
+    fi
+    return 1
+  fi
+
   echo "⚠️  WARNING: This will permanently delete ${repo_name}.git from ${GBARE_HOST}"
   echo "  Path: ${GBARE_PATH}/${repo_name}.git"
   echo ""
@@ -528,12 +664,17 @@ _gbare_delete() {
   read confirmation
 
   if [[ "$confirmation" == "$repo_name" ]]; then
-    _gbare_ssh "rm -rf ${GBARE_PATH}/${repo_name}.git"
+    local output
+    output=$(_gbare_ssh "rm -rf ${GBARE_PATH}/${repo_name}.git" 2>&1)
+    local exit_code=$?
 
-    if [[ $? -eq 0 ]]; then
+    if [[ $exit_code -eq 0 ]]; then
       echo "✓ Repository deleted: ${repo_name}.git"
     else
-      echo "✗ Failed to delete repository"
+      _gbare_error "Failed to delete repository"
+      if [[ -n "$output" ]]; then
+        echo "  Details: $output" >&2
+      fi
       return 1
     fi
   else
@@ -572,13 +713,38 @@ _gbare_info() {
   fi
   echo "SSH URL: ${remote_url}"
 
+  # SSH接続確認
+  if ! _gbare_check_ssh 2>/dev/null; then
+    echo ""
+    echo "Warning: Cannot connect to server to fetch repository details"
+    return 0
+  fi
+
+  # リポジトリの存在確認
+  if ! _gbare_repo_exists "$repo_name"; then
+    local check_rc=$?
+    echo ""
+    if [[ $check_rc -eq 2 ]]; then
+      _gbare_error "Unable to verify repository existence"
+    else
+      _gbare_error "Repository '${repo_name}.git' does not exist on ${GBARE_HOST}"
+    fi
+    return 1
+  fi
+
   if command -v git >/dev/null 2>&1; then
     echo ""
     echo "Branches and tags:"
-    _gbare_ssh "cd ${GBARE_PATH}/${repo_name}.git && git show-ref 2>/dev/null" 2>/dev/null
+    local output
+    output=$(_gbare_ssh "cd ${GBARE_PATH}/${repo_name}.git && git show-ref 2>/dev/null" 2>&1)
+    local exit_code=$?
 
-    if [[ $? -ne 0 ]]; then
-      echo "  (empty repository or connection failed)"
+    if [[ $exit_code -ne 0 ]]; then
+      echo "  (unable to fetch repository information)"
+    elif [[ -z "$output" ]]; then
+      echo "  (empty repository)"
+    else
+      echo "$output"
     fi
   fi
 }
@@ -649,7 +815,7 @@ _gbare_remote() {
   fi
 
   if [[ ! -d .git ]]; then
-    echo "✗ Not a git repository (no .git directory found)"
+    _gbare_error "Not a git repository (no .git directory found)"
     return 1
   fi
 
@@ -672,12 +838,13 @@ _gbare_remote() {
     fi
   fi
 
-  git remote add ${remote_name} ${remote_url}
+  git remote add "${remote_name}" "${remote_url}" 2>&1
+  local exit_code=$?
 
-  if [[ $? -eq 0 ]]; then
+  if [[ $exit_code -eq 0 ]]; then
     echo "✓ Remote '${remote_name}' added: ${remote_url}"
   else
-    echo "✗ Failed to add remote (may already exist)"
+    _gbare_error "Failed to add remote '${remote_name}' (may already exist)"
     return 1
   fi
 }
@@ -711,6 +878,7 @@ _gbare_config() {
   echo "  GBARE_PORT: ${GBARE_PORT:-"(default)"}"
   echo "  GBARE_PATH: ${GBARE_PATH}"
   echo "  GBARE_COLOR: ${GBARE_COLOR}"
+  echo "  GBARE_SSH_TIMEOUT: ${GBARE_SSH_TIMEOUT}s"
   echo ""
   echo "Set these in your ~/.zshrc, Sheldon plugins.toml, or config file"
   echo ""
@@ -972,12 +1140,13 @@ gbare() {
       echo "  help, h                          Show this help"
       echo ""
       echo "Configuration (set in ~/.zshrc, Sheldon, or config file):"
-      echo "  GBARE_USER    - SSH username (default: yumenomatayume)"
-      echo "  GBARE_HOST    - Server hostname or IP (default: nas)"
-      echo "  GBARE_PORT    - SSH port (optional, defaults to 22)"
-      echo "  GBARE_PATH    - Path to git repositories (default: /volume1/homes/\${GBARE_USER}/git)"
-      echo "  GBARE_PROFILE - Active profile name (default: default)"
-      echo "  GBARE_COLOR   - Enable color output (default: true)"
+      echo "  GBARE_USER         - SSH username (default: yumenomatayume)"
+      echo "  GBARE_HOST         - Server hostname or IP (default: nas)"
+      echo "  GBARE_PORT         - SSH port (optional, defaults to 22)"
+      echo "  GBARE_PATH         - Path to git repositories (default: /volume1/homes/\${GBARE_USER}/git)"
+      echo "  GBARE_PROFILE      - Active profile name (default: default)"
+      echo "  GBARE_COLOR        - Enable color output (default: true)"
+      echo "  GBARE_SSH_TIMEOUT  - SSH connection timeout in seconds (default: 10)"
       echo ""
       echo "Config file: ~/.config/gbare/config"
       echo "  Format: INI-style with [profile_name] sections"

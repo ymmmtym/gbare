@@ -14,6 +14,7 @@ oneTimeSetUp() {
   export GBARE_HOST="testhost"
   export GBARE_PORT=""
   export GBARE_PATH="/test/git"
+  export GBARE_SSH_TIMEOUT="10"
 }
 
 # ========================================
@@ -82,6 +83,12 @@ test_config_port_set() {
   GBARE_PORT=""
 }
 
+test_config_ssh_timeout() {
+  local output=$(_gbare_config)
+  assertContains "$output" "GBARE_SSH_TIMEOUT" "Config has SSH_TIMEOUT key"
+  assertContains "$output" "10s" "Config shows timeout value"
+}
+
 # ========================================
 # Info Command Tests
 # ========================================
@@ -104,6 +111,33 @@ test_info_with_name() {
 test_url_command() {
   local result=$(_gbare_url "myrepo")
   assertEquals "ssh://testuser@testhost/test/git/myrepo.git" "$result" "URL command output"
+}
+
+test_url_without_name() {
+  local result=$(_gbare_url 2>&1)
+  assertContains "$result" "Usage" "Shows usage message without name"
+}
+
+# ========================================
+# Error Handling Function Tests
+# ========================================
+
+test_error_function_exists() {
+  assertTrue "_gbare_error exists" "typeset -f _gbare_error > /dev/null"
+}
+
+test_check_ssh_function_exists() {
+  assertTrue "_gbare_check_ssh exists" "typeset -f _gbare_check_ssh > /dev/null"
+}
+
+test_repo_exists_function_exists() {
+  assertTrue "_gbare_repo_exists exists" "typeset -f _gbare_repo_exists > /dev/null"
+}
+
+test_ssh_timeout_configurable() {
+  export GBARE_SSH_TIMEOUT="30"
+  assertEquals "30" "$GBARE_SSH_TIMEOUT" "SSH timeout is configurable"
+  export GBARE_SSH_TIMEOUT="10"
 }
 
 # ========================================
