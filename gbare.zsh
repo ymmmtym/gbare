@@ -37,7 +37,7 @@ GBARE_CONFIG_FILE="${GBARE_CONFIG_FILE:-${HOME}/.config/gbare/config}"
 : ${GBARE_COLOR:="true"}
 
 # Color definitions
-if [[ "$GBARE_COLOR" == "true" ]] && [[ -t 1 ]]; then
+if [[ "$GBARE_COLOR" == "true" ]]; then
   GBARE_COLOR_RESET=$'\033[0m'
   GBARE_COLOR_RED=$'\033[0;31m'
   GBARE_COLOR_GREEN=$'\033[0;32m'

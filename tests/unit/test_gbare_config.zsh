@@ -233,8 +233,9 @@ test_validate_valid_config() {
   export GBARE_PORT=""
   
   _gbare_validate_settings
+  local exit_code=$?
   
-  assertTrue "Valid config passes" "$?"
+  assertTrue "Valid config passes" "[[ $exit_code -eq 0 ]]"
 }
 
 test_validate_valid_config_with_port() {
@@ -244,8 +245,9 @@ test_validate_valid_config_with_port() {
   export GBARE_PORT="2222"
   
   _gbare_validate_settings
+  local exit_code=$?
   
-  assertTrue "Valid config with port passes" "$?"
+  assertTrue "Valid config with port passes" "[[ $exit_code -eq 0 ]]"
 }
 
 test_validate_missing_user() {
