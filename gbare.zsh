@@ -76,7 +76,7 @@ _gbare_load_config() {
     line="${line%%#*}"
     line="${line## }"
     [[ -z "$line" ]] && continue
-    if [[ "$line" =~ ^\[([a-zA-Z0-9_-]+)\]$ ]]; then
+    if [[ "$line" =~ '^\[([a-zA-Z0-9_-]+)\]$' ]]; then
       has_profiles=true
       break
     fi
@@ -116,7 +116,7 @@ _gbare_load_config() {
     line="${line%% }"
     [[ -z "$line" ]] && continue
 
-    if [[ "$line" =~ ^\[([a-zA-Z0-9_-]+)\]$ ]]; then
+    if [[ "$line" =~ '^\[([a-zA-Z0-9_-]+)\]$' ]]; then
       current_profile="${match[1]}"
       if [[ "$current_profile" == "$target_profile" ]]; then
         in_target_profile=true
@@ -196,7 +196,7 @@ _gbare_list_profiles() {
 
   local profiles=()
   while IFS= read -r line || [[ -n "$line" ]]; do
-    if [[ "$line" =~ ^\[([a-zA-Z0-9_-]+)\]$ ]]; then
+    if [[ "$line" =~ '^\[([a-zA-Z0-9_-]+)\]$' ]]; then
       profiles+=("${match[1]}")
     fi
   done < "$config_file"
@@ -230,7 +230,7 @@ _gbare_show_profile() {
   local settings=()
 
   while IFS= read -r line || [[ -n "$line" ]]; do
-    if [[ "$line" =~ ^\[([a-zA-Z0-9_-]+)\]$ ]]; then
+    if [[ "$line" =~ '^\[([a-zA-Z0-9_-]+)\]$' ]]; then
       if [[ "${match[1]}" == "$profile_name" ]]; then
         in_profile=true
         found=true

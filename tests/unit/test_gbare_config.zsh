@@ -181,7 +181,8 @@ EOF
 test_list_profiles_no_file() {
   [[ -f "$GBARE_CONFIG_FILE" ]] && rm -f "$GBARE_CONFIG_FILE"
   
-  local result=$(_gbare_list_profiles 2>&1)
+  local result
+  result=$(_gbare_list_profiles 2>&1)
   local exit_code=$?
   
   assertContains "$result" "No config file" "Shows no config file message"
@@ -215,7 +216,8 @@ test_show_profile_not_found() {
 GBARE_USER=defaultuser
 EOF
   
-  local result=$(_gbare_show_profile "nonexistent" 2>&1)
+  local result
+  result=$(_gbare_show_profile "nonexistent" 2>&1)
   local exit_code=$?
   
   assertContains "$result" "not found" "Shows profile not found"
@@ -255,7 +257,8 @@ test_validate_missing_user() {
   export GBARE_HOST="validhost"
   export GBARE_PATH="/valid/path"
   
-  local result=$(_gbare_validate_settings 2>&1)
+  local result
+  result=$(_gbare_validate_settings 2>&1)
   local exit_code=$?
   
   assertContains "$result" "GBARE_USER" "Error mentions missing user"
@@ -267,7 +270,8 @@ test_validate_missing_host() {
   export GBARE_HOST=""
   export GBARE_PATH="/valid/path"
   
-  local result=$(_gbare_validate_settings 2>&1)
+  local result
+  result=$(_gbare_validate_settings 2>&1)
   local exit_code=$?
   
   assertContains "$result" "GBARE_HOST" "Error mentions missing host"
@@ -279,7 +283,8 @@ test_validate_missing_path() {
   export GBARE_HOST="validhost"
   export GBARE_PATH=""
   
-  local result=$(_gbare_validate_settings 2>&1)
+  local result
+  result=$(_gbare_validate_settings 2>&1)
   local exit_code=$?
   
   assertContains "$result" "GBARE_PATH" "Error mentions missing path"
@@ -292,7 +297,8 @@ test_validate_invalid_port() {
   export GBARE_PATH="/valid/path"
   export GBARE_PORT="abc"
   
-  local result=$(_gbare_validate_settings 2>&1)
+  local result
+  result=$(_gbare_validate_settings 2>&1)
   local exit_code=$?
   
   assertContains "$result" "GBARE_PORT" "Error mentions invalid port"
@@ -305,7 +311,8 @@ test_validate_port_out_of_range_high() {
   export GBARE_PATH="/valid/path"
   export GBARE_PORT="99999"
   
-  local result=$(_gbare_validate_settings 2>&1)
+  local result
+  result=$(_gbare_validate_settings 2>&1)
   local exit_code=$?
   
   assertContains "$result" "65535" "Error mentions port range"
@@ -318,7 +325,8 @@ test_validate_port_zero() {
   export GBARE_PATH="/valid/path"
   export GBARE_PORT="0"
   
-  local result=$(_gbare_validate_settings 2>&1)
+  local result
+  result=$(_gbare_validate_settings 2>&1)
   local exit_code=$?
   
   assertContains "$result" "GBARE_PORT" "Error mentions port out of range"
