@@ -987,6 +987,11 @@ gbare() {
 # Note:
 #   This function is called internally by zsh completion system
 _gbare_repos() {
+  if [[ -z "${_GBARE_CONFIG_LOADED}" ]]; then
+    _gbare_load_config
+    export _GBARE_CONFIG_LOADED=true
+  fi
+
   local repos
   repos=(${(f)"$(_gbare_ssh "ls -1d ${GBARE_PATH}/*.git 2>/dev/null" 2>/dev/null | sed 's/.*\///' | sed 's/\.git$//')"})
   _describe 'repository' repos
