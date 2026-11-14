@@ -50,5 +50,6 @@ Temporary Items
 
 # End of https://www.toptal.com/developers/gitignore/api/macos,linux
 
+mise.local.toml
 .gemini/
 gha-creds-*.json
