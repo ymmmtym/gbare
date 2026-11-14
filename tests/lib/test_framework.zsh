@@ -80,6 +80,24 @@ assertFalse() {
   fi
 }
 
+assertNotEquals() {
+  local unexpected="$1"
+  local actual="$2"
+  local message="${3:-}"
+  
+  _TEST_COUNT=$((_TEST_COUNT + 1))
+  
+  if [[ "$unexpected" != "$actual" ]]; then
+    _TEST_PASSED=$((_TEST_PASSED + 1))
+    echo "${fg[green]}  ✓${reset_color} ${_CURRENT_TEST}: ${message}"
+  else
+    _TEST_FAILED=$((_TEST_FAILED + 1))
+    echo "${fg[red]}  ✗${reset_color} ${_CURRENT_TEST}: ${message}"
+    echo "    Unexpected: ${unexpected}"
+    echo "    Actual:     ${actual}"
+  fi
+}
+
 # テスト実行
 runTest() {
   local test_name="$1"
