@@ -144,6 +144,37 @@ EOF
   assertEquals "2222" "$GBARE_PORT" "Work profile port"
 }
 
+test_load_config_with_commented_profile_headers() {
+  cat > "$GBARE_CONFIG_FILE" <<EOF
+[default] # Default settings
+GBARE_USER=defaultuser
+GBARE_HOST=defaultserver
+GBARE_PATH=/default/git
+
+[work] # Work settings
+GBARE_USER=workuser
+GBARE_HOST=workserver
+GBARE_PORT=2222
+EOF
+
+  GBARE_PROFILE="default"
+  _gbare_load_config
+
+  assertEquals "defaultuser" "$GBARE_USER" "Commented default profile user"
+  assertEquals "defaultserver" "$GBARE_HOST" "Commented default profile host"
+  assertEquals "" "$GBARE_PORT" "Work port does not leak into default profile"
+  assertEquals "/default/git" "$GBARE_PATH" "Commented default profile path"
+
+  GBARE_PROFILE="work"
+  GBARE_PATH="/test/git"
+  _gbare_load_config
+
+  assertEquals "workuser" "$GBARE_USER" "Commented work profile user"
+  assertEquals "workserver" "$GBARE_HOST" "Commented work profile host"
+  assertEquals "2222" "$GBARE_PORT" "Commented work profile port"
+  assertEquals "/test/git" "$GBARE_PATH" "Default path does not leak into work profile"
+}
+
 test_load_config_profile_with_underscores() {
   cat > "$GBARE_CONFIG_FILE" <<EOF
 [my_server]

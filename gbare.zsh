@@ -75,6 +75,7 @@ _gbare_load_config() {
   while IFS= read -r line || [[ -n "$line" ]]; do
     line="${line%%#*}"
     line="${line## }"
+    line="${line%% }"
     [[ -z "$line" ]] && continue
     if [[ "$line" =~ '^\[([a-zA-Z0-9_-]+)\]$' ]]; then
       has_profiles=true
