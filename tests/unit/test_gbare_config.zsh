@@ -22,6 +22,7 @@ setUp() {
   export GBARE_HOST="testhost"
   export GBARE_PORT=""
   export GBARE_PATH="/test/git"
+  export GBARE_COLOR="true"
 }
 
 tearDown() {
@@ -253,6 +254,77 @@ EOF
   
   assertContains "$result" "not found" "Shows profile not found"
   assertTrue "Returns non-zero" "[[ $exit_code -ne 0 ]]"
+}
+
+# Exercise the public command in the same shell so cached state is retained.
+test_command_reloads_changed_selection() {
+  cat > "$GBARE_CONFIG_FILE" <<EOF
+[default]
+GBARE_USER=firstuser
+GBARE_HOST=firsthost
+GBARE_PORT=2222
+GBARE_PATH=/first/git
+GBARE_COLOR=false
+[work]
+GBARE_HOST=workhost
+EOF
+  gbare config >/dev/null
+  assertEquals "2222" "$GBARE_PORT" "First selection loaded"
+
+  GBARE_PROFILE=work gbare config >/dev/null
+  assertEquals "workhost" "$GBARE_HOST" "Temporary profile selection loaded"
+  assertEquals "testuser" "$GBARE_USER" "Omitted user restored from baseline"
+  assertEquals "" "$GBARE_PORT" "Omitted port restored from baseline"
+  assertEquals "/test/git" "$GBARE_PATH" "Omitted path restored from baseline"
+  assertEquals "true" "$GBARE_COLOR" "Omitted color restored from baseline"
+
+  gbare config >/dev/null
+  assertEquals "firsthost" "$GBARE_HOST" "Returning from temporary profile reloads"
+  GBARE_PROFILE=missing
+  gbare config >/dev/null
+  assertEquals "testhost" "$GBARE_HOST" "Missing profile uses clean baseline"
+
+  GBARE_PROFILE=default
+  gbare config >/dev/null
+  local other_config="${_TEST_TMPDIR}/other_config"
+  print -r -- 'GBARE_HOST=otherhost' > "$other_config"
+  GBARE_CONFIG_FILE="$other_config" gbare config >/dev/null
+  assertEquals "otherhost" "$GBARE_HOST" "Changed config path loaded"
+  assertEquals "" "$GBARE_PORT" "Changed file does not inherit port"
+  gbare config >/dev/null
+  assertEquals "firsthost" "$GBARE_HOST" "Returning from temporary path reloads"
+
+  GBARE_CONFIG_FILE="${_TEST_TMPDIR}/missing_config" gbare config >/dev/null
+  assertEquals "testhost" "$GBARE_HOST" "Missing file uses clean baseline"
+}
+
+test_command_keeps_same_selection_cached() {
+  print -r -- 'GBARE_HOST=firsthost' > "$GBARE_CONFIG_FILE"
+  gbare config >/dev/null
+  print -r -- 'GBARE_HOST=changedhost' > "$GBARE_CONFIG_FILE"
+  gbare config >/dev/null
+  assertEquals "firsthost" "$GBARE_HOST" "Unchanged selection remains cached"
+}
+
+test_completion_reloads_changed_selection() {
+  cat > "$GBARE_CONFIG_FILE" <<EOF
+[default]
+GBARE_PORT=2222
+[work]
+GBARE_HOST=workhost
+EOF
+  # Stub completion's remote access and display; retain settings in this shell.
+  local original_ssh="${functions[_gbare_ssh]}"
+  _gbare_ssh() { :; }
+  _describe() { :; }
+  _gbare_repos
+  assertEquals "2222" "$GBARE_PORT" "Completion loads first selection"
+  GBARE_PROFILE=work
+  _gbare_repos
+  assertEquals "workhost" "$GBARE_HOST" "Completion reloads changed profile"
+  assertEquals "" "$GBARE_PORT" "Completion clears omitted settings"
+  functions[_gbare_ssh]="$original_ssh"
+  unfunction _describe
 }
 
 # ========================================

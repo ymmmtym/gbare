@@ -147,6 +147,30 @@ _gbare_load_config() {
   return 0
 }
 
+# Reload a changed selection from the settings present before the first load.
+_gbare_ensure_config() {
+  local config_file="${GBARE_CONFIG_FILE:a}"
+  if [[ -z "${_GBARE_CONFIG_LOADED}" ]]; then
+    typeset -ga _GBARE_CONFIG_BASELINE=(
+      "$GBARE_USER" "$GBARE_HOST" "$GBARE_PORT" "$GBARE_PATH" "$GBARE_COLOR"
+    )
+  elif [[ "${_GBARE_LOADED_CONFIG_FILE}" == "$config_file" &&
+          "${_GBARE_LOADED_PROFILE}" == "$GBARE_PROFILE" ]]; then
+    return 0
+  else
+    GBARE_USER="${_GBARE_CONFIG_BASELINE[1]}"
+    GBARE_HOST="${_GBARE_CONFIG_BASELINE[2]}"
+    GBARE_PORT="${_GBARE_CONFIG_BASELINE[3]}"
+    GBARE_PATH="${_GBARE_CONFIG_BASELINE[4]}"
+    GBARE_COLOR="${_GBARE_CONFIG_BASELINE[5]}"
+  fi
+
+  _gbare_load_config
+  typeset -g _GBARE_CONFIG_LOADED=true
+  typeset -g _GBARE_LOADED_CONFIG_FILE="$config_file"
+  typeset -g _GBARE_LOADED_PROFILE="$GBARE_PROFILE"
+}
+
 # Validate current configuration settings
 # Checks that required values are set and GBARE_PORT is valid
 _gbare_validate_settings() {
@@ -856,11 +880,7 @@ _gbare_search() {
 #   gbare list
 #   gbare help
 gbare() {
-  # Load config file on first invocation
-  if [[ -z "${_GBARE_CONFIG_LOADED}" ]]; then
-    _gbare_load_config
-    export _GBARE_CONFIG_LOADED=true
-  fi
+  _gbare_ensure_config
 
   local cmd=$1
   shift
@@ -988,10 +1008,7 @@ gbare() {
 # Note:
 #   This function is called internally by zsh completion system
 _gbare_repos() {
-  if [[ -z "${_GBARE_CONFIG_LOADED}" ]]; then
-    _gbare_load_config
-    export _GBARE_CONFIG_LOADED=true
-  fi
+  _gbare_ensure_config
 
   local repos
   repos=(${(f)"$(_gbare_ssh "ls -1d ${GBARE_PATH}/*.git 2>/dev/null" 2>/dev/null | sed 's/.*\///' | sed 's/\.git$//')"})
