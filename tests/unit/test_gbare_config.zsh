@@ -327,6 +327,63 @@ EOF
   unfunction _describe
 }
 
+test_color_config_refreshes_command_output() {
+  cat > "$GBARE_CONFIG_FILE" <<EOF
+[default]
+GBARE_COLOR=false
+[bright]
+GBARE_COLOR=true
+EOF
+  local original_ssh="${functions[_gbare_ssh]}"
+  _gbare_ssh() { :; }
+  local output_file="${_TEST_TMPDIR}/color_output"
+  local command_name output escape=$'\e'
+  for command_name in sync backup search; do
+    gbare "$command_name" "${_TEST_TMPDIR}/target" > "$output_file"
+    output=$(<"$output_file")
+    assertFalse "$command_name has no escape sequences" '[[ "$output" == *"$escape"* ]]'
+  done
+  GBARE_PROFILE=bright
+  gbare search example > "$output_file"
+  output=$(<"$output_file")
+  assertContains "$output" $'\e[' "Switching profiles enables color"
+  GBARE_PROFILE=default
+  gbare search example > "$output_file"
+  output=$(<"$output_file")
+  assertFalse "Switching back clears color" '[[ "$output" == *"$escape"* ]]'
+  functions[_gbare_ssh]="$original_ssh"
+}
+
+test_flat_config_refreshes_colors() {
+  print -r -- 'GBARE_COLOR=false' > "$GBARE_CONFIG_FILE"
+  _gbare_load_config
+  assertEquals "" "$GBARE_COLOR_RED$GBARE_COLOR_GREEN$GBARE_COLOR_YELLOW$GBARE_COLOR_BLUE$GBARE_COLOR_CYAN$GBARE_COLOR_BOLD$GBARE_COLOR_RESET" "Flat config clears all colors"
+  GBARE_COLOR=true
+  rm "$GBARE_CONFIG_FILE"
+  _gbare_load_config
+  assertContains "$GBARE_COLOR_RED" $'\e[' "Missing file refreshes baseline colors"
+}
+
+test_profile_commands_normalize_headers() {
+  cat > "$GBARE_CONFIG_FILE" <<EOF
+# [ignored]
+ [default]   # Default settings
+GBARE_USER=defaultuser
+ [work]	 	# Work settings
+GBARE_USER=workuser
+[empty] # No settings
+EOF
+  local output=$(_gbare_list_profiles)
+  assertContains "$output" "* default (active)" "Lists commented active header"
+  assertContains "$output" "- work" "Lists header with trailing tabs"
+  assertFalse "Comment-only header excluded" '[[ "$output" == *ignored* ]]'
+  output=$(_gbare_show_profile default)
+  assertContains "$output" "GBARE_USER=defaultuser" "Finds normalized header"
+  assertFalse "Stops at normalized next header" '[[ "$output" == *workuser* ]]'
+  output=$(_gbare_show_profile work)
+  assertContains "$output" "GBARE_USER=workuser" "Finds header with trailing tabs"
+}
+
 # ========================================
 # Validation Tests
 # ========================================

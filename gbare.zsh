@@ -36,24 +36,28 @@ GBARE_CONFIG_FILE="${GBARE_CONFIG_FILE:-${HOME}/.config/gbare/config}"
 # Default: "true"
 : ${GBARE_COLOR:="true"}
 
-# Color definitions
-if [[ "$GBARE_COLOR" == "true" ]]; then
-  GBARE_COLOR_RESET=$'\033[0m'
-  GBARE_COLOR_RED=$'\033[0;31m'
-  GBARE_COLOR_GREEN=$'\033[0;32m'
-  GBARE_COLOR_YELLOW=$'\033[0;33m'
-  GBARE_COLOR_BLUE=$'\033[0;34m'
-  GBARE_COLOR_CYAN=$'\033[0;36m'
-  GBARE_COLOR_BOLD=$'\033[1m'
-else
-  GBARE_COLOR_RESET=""
-  GBARE_COLOR_RED=""
-  GBARE_COLOR_GREEN=""
-  GBARE_COLOR_YELLOW=""
-  GBARE_COLOR_BLUE=""
-  GBARE_COLOR_CYAN=""
-  GBARE_COLOR_BOLD=""
-fi
+# Refresh color definitions after configuration changes.
+_gbare_init_colors() {
+  if [[ "$GBARE_COLOR" == "true" ]]; then
+    GBARE_COLOR_RESET=$'\033[0m'
+    GBARE_COLOR_RED=$'\033[0;31m'
+    GBARE_COLOR_GREEN=$'\033[0;32m'
+    GBARE_COLOR_YELLOW=$'\033[0;33m'
+    GBARE_COLOR_BLUE=$'\033[0;34m'
+    GBARE_COLOR_CYAN=$'\033[0;36m'
+    GBARE_COLOR_BOLD=$'\033[1m'
+  else
+    GBARE_COLOR_RESET=""
+    GBARE_COLOR_RED=""
+    GBARE_COLOR_GREEN=""
+    GBARE_COLOR_YELLOW=""
+    GBARE_COLOR_BLUE=""
+    GBARE_COLOR_CYAN=""
+    GBARE_COLOR_BOLD=""
+  fi
+}
+
+_gbare_init_colors
 
 # ========================================
 # Config File Loading
@@ -68,6 +72,7 @@ _gbare_load_config() {
   local has_profiles=false
 
   if [[ ! -f "$config_file" ]]; then
+    _gbare_init_colors
     return 0
   fi
 
@@ -105,6 +110,7 @@ _gbare_load_config() {
         esac
       fi
     done < "$config_file"
+    _gbare_init_colors
     return 0
   fi
 
@@ -144,6 +150,7 @@ _gbare_load_config() {
     fi
   done < "$config_file"
 
+  _gbare_init_colors
   return 0
 }
 
@@ -221,6 +228,10 @@ _gbare_list_profiles() {
 
   local profiles=()
   while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%%#*}"
+    line="${line## }"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "$line" ]] && continue
     if [[ "$line" =~ '^\[([a-zA-Z0-9_-]+)\]$' ]]; then
       profiles+=("${match[1]}")
     fi
@@ -255,6 +266,10 @@ _gbare_show_profile() {
   local settings=()
 
   while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%%#*}"
+    line="${line## }"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "$line" ]] && continue
     if [[ "$line" =~ '^\[([a-zA-Z0-9_-]+)\]$' ]]; then
       if [[ "${match[1]}" == "$profile_name" ]]; then
         in_profile=true
@@ -268,9 +283,6 @@ _gbare_show_profile() {
     fi
 
     if [[ "$in_profile" == true ]]; then
-      line="${line%%#*}"
-      line="${line## }"
-      [[ -z "$line" ]] && continue
       if [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
         settings+=("$line")
       fi
