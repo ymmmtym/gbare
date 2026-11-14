@@ -147,12 +147,12 @@ EOF
 
 test_load_config_with_commented_profile_headers() {
   cat > "$GBARE_CONFIG_FILE" <<EOF
-[default] # Default settings
+[default]   # Default settings
 GBARE_USER=defaultuser
 GBARE_HOST=defaultserver
 GBARE_PATH=/default/git
 
-[work] # Work settings
+[work]	 	# Work settings
 GBARE_USER=workuser
 GBARE_HOST=workserver
 GBARE_PORT=2222
