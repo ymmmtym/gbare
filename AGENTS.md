@@ -2,7 +2,12 @@
 
 ## Project
 
-zsh plugin for managing bare Git repositories on remote servers. Main code: `gbare.zsh`, plugin entry: `gbare.plugin.zsh`.
+zsh plugin for managing bare Git repositories on remote servers. Modular code structure:
+- `gbare.plugin.zsh` - Plugin entry point (sources all modules)
+- `gbare.zsh` - Backward compatibility loader
+- `lib/helpers.zsh` - Helper functions (SSH, URL builders)
+- `lib/core.zsh` - Core functions (create, list, clone, delete, etc.)
+- `lib/completion.zsh` - Zsh completion functions
 
 ## Commands
 
