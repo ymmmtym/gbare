@@ -162,7 +162,7 @@ _gbare_ensure_config() {
   local config_file="${GBARE_CONFIG_FILE:a}"
   if [[ -z "${_GBARE_CONFIG_LOADED}" ]]; then
     typeset -ga _GBARE_CONFIG_BASELINE=(
-      "$GBARE_USER" "$GBARE_HOST" "$GBARE_PORT" "$GBARE_PATH" "$GBARE_COLOR"
+      "$GBARE_USER" "$GBARE_HOST" "$GBARE_PORT" "$GBARE_PATH" "$GBARE_COLOR" "$GBARE_SSH_TIMEOUT"
     )
   elif [[ "${_GBARE_LOADED_CONFIG_FILE}" == "$config_file" &&
           "${_GBARE_LOADED_PROFILE}" == "$GBARE_PROFILE" ]]; then
@@ -173,6 +173,7 @@ _gbare_ensure_config() {
     GBARE_PORT="${_GBARE_CONFIG_BASELINE[3]}"
     GBARE_PATH="${_GBARE_CONFIG_BASELINE[4]}"
     GBARE_COLOR="${_GBARE_CONFIG_BASELINE[5]}"
+    GBARE_SSH_TIMEOUT="${_GBARE_CONFIG_BASELINE[6]}"
   fi
 
   _gbare_load_config

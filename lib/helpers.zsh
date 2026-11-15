@@ -31,6 +31,7 @@ _gbare_check_ssh() {
 
   if [[ $exit_code -ne 0 ]]; then
     echo "${GBARE_COLOR_RED}Error: SSH connection failed${GBARE_COLOR_RESET}" >&2
+    [[ -n "$output" ]] && print -r -- "  Details: ${output}" >&2
     echo "  Host: ${GBARE_HOST}" >&2
     if [[ -n "$GBARE_PORT" ]]; then
       echo "  Port: ${GBARE_PORT}" >&2
@@ -51,9 +52,10 @@ _gbare_check_ssh() {
 }
 
 # リポジトリ存在チェック
+# Returns: 0 if present, 1 if absent, other statuses on SSH/remote errors.
 _gbare_check_repo_exists() {
   local repo_name=$1
-  _gbare_ssh -n "test -d ${GBARE_PATH}/${repo_name}.git" 2>/dev/null
+  _gbare_ssh -n "test -d ${GBARE_PATH}/${repo_name}.git"
   return $?
 }
 

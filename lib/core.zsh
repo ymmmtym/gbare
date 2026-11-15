@@ -72,6 +72,12 @@ _gbare_create() {
   if _gbare_check_repo_exists "${repo_name}"; then
     _gbare_warn "Repository '${repo_name}.git' already exists on ${GBARE_HOST}"
     return 1
+  else
+    local repo_status=$?
+    if [[ $repo_status -ne 1 ]]; then
+      _gbare_error "Failed to check repository on ${GBARE_HOST}"
+      return 1
+    fi
   fi
 
   # Create bare repository on server
@@ -84,7 +90,10 @@ _gbare_create() {
 
     # Initialize local repo if not already a git repo
     if [[ ! -d .git ]]; then
-      git init
+      if ! git init; then
+        _gbare_error "Remote repository exists on ${GBARE_HOST}, but local setup failed (git init)"
+        return 1
+      fi
       _gbare_ok "Local repository initialized"
     fi
 
@@ -179,7 +188,14 @@ _gbare_clone() {
   fi
 
   # リポジトリ存在チェック
-  if ! _gbare_check_repo_exists "${repo_name}"; then
+  local repo_status
+  _gbare_check_repo_exists "${repo_name}"
+  repo_status=$?
+  if [[ $repo_status -ne 0 && $repo_status -ne 1 ]]; then
+    _gbare_error "Failed to check repository on ${GBARE_HOST}"
+    return 1
+  fi
+  if [[ $repo_status -eq 1 ]]; then
     _gbare_error "Repository '${repo_name}.git' does not exist on ${GBARE_HOST}"
     echo ""
     echo "Available repositories:"
@@ -237,7 +253,14 @@ _gbare_delete() {
   fi
 
   # リポジトリ存在チェック
-  if ! _gbare_check_repo_exists "${repo_name}"; then
+  local repo_status
+  _gbare_check_repo_exists "${repo_name}"
+  repo_status=$?
+  if [[ $repo_status -ne 0 && $repo_status -ne 1 ]]; then
+    _gbare_error "Failed to check repository on ${GBARE_HOST}"
+    return 1
+  fi
+  if [[ $repo_status -eq 1 ]]; then
     _gbare_error "Repository '${repo_name}.git' does not exist on ${GBARE_HOST}"
     return 1
   fi
@@ -293,7 +316,14 @@ _gbare_info() {
   fi
 
   # リポジトリ存在チェック
-  if ! _gbare_check_repo_exists "${repo_name}"; then
+  local repo_status
+  _gbare_check_repo_exists "${repo_name}"
+  repo_status=$?
+  if [[ $repo_status -ne 0 && $repo_status -ne 1 ]]; then
+    _gbare_error "Failed to check repository on ${GBARE_HOST}"
+    return 1
+  fi
+  if [[ $repo_status -eq 1 ]]; then
     _gbare_error "Repository '${repo_name}.git' does not exist on ${GBARE_HOST}"
     return 1
   fi
@@ -399,7 +429,14 @@ _gbare_remote() {
   fi
 
   # リポジトリ存在チェック
-  if ! _gbare_check_repo_exists "${repo_name}"; then
+  local repo_status
+  _gbare_check_repo_exists "${repo_name}"
+  repo_status=$?
+  if [[ $repo_status -ne 0 && $repo_status -ne 1 ]]; then
+    _gbare_error "Failed to check repository on ${GBARE_HOST}"
+    return 1
+  fi
+  if [[ $repo_status -eq 1 ]]; then
     _gbare_error "Repository '${repo_name}.git' does not exist on ${GBARE_HOST}"
     return 1
   fi
@@ -513,10 +550,17 @@ _gbare_sync() {
   fi
 
   echo "${GBARE_COLOR_GREEN}Pulling latest changes...${GBARE_COLOR_RESET}"
-  git pull ${remote_name} main 2>/dev/null || git pull ${remote_name} master 2>/dev/null
+  local branch=main
+  if ! git pull ${remote_name} "$branch" 2>/dev/null; then
+    branch=master
+    if ! git pull ${remote_name} "$branch" 2>/dev/null; then
+      _gbare_error "Sync failed: unable to pull main or master"
+      return 1
+    fi
+  fi
 
   echo "${GBARE_COLOR_GREEN}Pushing local changes...${GBARE_COLOR_RESET}"
-  git push ${remote_name} HEAD:main 2>/dev/null || git push ${remote_name} HEAD:master 2>/dev/null
+  git push ${remote_name} "HEAD:${branch}" 2>/dev/null
 
   if [[ $? -eq 0 ]]; then
     echo ""
@@ -548,14 +592,21 @@ _gbare_backup() {
 
   mkdir -p "${backup_dir}/${timestamp}"
 
-  local repos=$(_gbare_ssh "ls -1d ${GBARE_PATH}/*.git 2>/dev/null" 2>/dev/null)
+  local repos
+  repos=$(_gbare_ssh "find ${GBARE_PATH} -mindepth 1 -maxdepth 1 -name '*.git' -prune")
+  local exit_code=$?
+  if [[ $exit_code -ne 0 ]]; then
+    _gbare_error "Failed to enumerate repositories for backup"
+    return 1
+  fi
 
   if [[ -z "$repos" ]]; then
     echo "${GBARE_COLOR_YELLOW}No repositories found to backup${GBARE_COLOR_RESET}"
     return 0
   fi
 
-  echo "$repos" | while read repo_path; do
+  local failed=0
+  while IFS= read -r repo_path; do
     local repo_name=$(basename "$repo_path" .git)
     echo "${GBARE_COLOR_CYAN}Backing up: ${repo_name}${GBARE_COLOR_RESET}"
 
@@ -567,9 +618,15 @@ _gbare_backup() {
     if [[ $? -eq 0 ]]; then
       echo "${GBARE_COLOR_GREEN}  ✓ ${repo_name} backed up${GBARE_COLOR_RESET}"
     else
+      failed=1
       echo "${GBARE_COLOR_RED}  ✗ Failed to backup ${repo_name}${GBARE_COLOR_RESET}"
     fi
-  done
+  done <<< "$repos"
+
+  if [[ $failed -ne 0 ]]; then
+    _gbare_error "Backup incomplete: ${backup_dir}/${timestamp}"
+    return 1
+  fi
 
   echo ""
   echo "${GBARE_COLOR_GREEN}✓ Backup completed: ${backup_dir}/${timestamp}${GBARE_COLOR_RESET}"
@@ -606,7 +663,7 @@ _gbare_search() {
 
   local found=0
   echo "$repos" | sed 's/.*\///' | sed 's/\.git$//' | while read repo; do
-    if echo "$repo" | grep -i "$query" > /dev/null 2>&1; then
+    if print -r -- "$repo" | grep -Fi -- "$query" > /dev/null 2>&1; then
       echo "${GBARE_COLOR_GREEN}  • $repo${GBARE_COLOR_RESET}"
       found=1
     fi
