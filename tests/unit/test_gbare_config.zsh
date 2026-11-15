@@ -23,6 +23,7 @@ setUp() {
   export GBARE_PORT=""
   export GBARE_PATH="/test/git"
   export GBARE_COLOR="true"
+  export GBARE_SSH_TIMEOUT="17"
 }
 
 tearDown() {
@@ -265,14 +266,17 @@ GBARE_HOST=firsthost
 GBARE_PORT=2222
 GBARE_PATH=/first/git
 GBARE_COLOR=false
+GBARE_SSH_TIMEOUT=42
 [work]
 GBARE_HOST=workhost
 EOF
   gbare config >/dev/null
   assertEquals "2222" "$GBARE_PORT" "First selection loaded"
+  assertEquals "42" "$GBARE_SSH_TIMEOUT" "Profile timeout loaded"
 
   GBARE_PROFILE=work gbare config >/dev/null
   assertEquals "workhost" "$GBARE_HOST" "Temporary profile selection loaded"
+  assertEquals "17" "$GBARE_SSH_TIMEOUT" "Omitted timeout restored from baseline"
   assertEquals "testuser" "$GBARE_USER" "Omitted user restored from baseline"
   assertEquals "" "$GBARE_PORT" "Omitted port restored from baseline"
   assertEquals "/test/git" "$GBARE_PATH" "Omitted path restored from baseline"
