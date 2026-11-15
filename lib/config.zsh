@@ -40,6 +40,9 @@ GBARE_CONFIG_FILE="${GBARE_CONFIG_FILE:-${HOME}/.config/gbare/config}"
 # Default: "true"
 : ${GBARE_COLOR:="true"}
 
+# SSH接続タイムアウト（秒）
+: ${GBARE_SSH_TIMEOUT:="10"}
+
 # Refresh color definitions after configuration changes.
 _gbare_init_colors() {
   if [[ "$GBARE_COLOR" == "true" ]]; then
@@ -111,6 +114,7 @@ _gbare_load_config() {
           GBARE_PORT)  export GBARE_PORT="$value" ;;
           GBARE_PATH)  export GBARE_PATH="$value" ;;
           GBARE_COLOR) export GBARE_COLOR="$value" ;;
+          GBARE_SSH_TIMEOUT) export GBARE_SSH_TIMEOUT="$value" ;;
         esac
       fi
     done < "$config_file"
@@ -149,6 +153,7 @@ _gbare_load_config() {
           GBARE_PORT)  export GBARE_PORT="$value" ;;
           GBARE_PATH)  export GBARE_PATH="$value" ;;
           GBARE_COLOR) export GBARE_COLOR="$value" ;;
+          GBARE_SSH_TIMEOUT) export GBARE_SSH_TIMEOUT="$value" ;;
         esac
       fi
     fi
@@ -163,7 +168,7 @@ _gbare_ensure_config() {
   local config_file="${GBARE_CONFIG_FILE:a}"
   if [[ -z "${_GBARE_CONFIG_LOADED}" ]]; then
     typeset -ga _GBARE_CONFIG_BASELINE=(
-      "$GBARE_USER" "$GBARE_HOST" "$GBARE_PORT" "$GBARE_PATH" "$GBARE_COLOR"
+      "$GBARE_USER" "$GBARE_HOST" "$GBARE_PORT" "$GBARE_PATH" "$GBARE_COLOR" "$GBARE_SSH_TIMEOUT"
     )
   elif [[ "${_GBARE_LOADED_CONFIG_FILE}" == "$config_file" &&
           "${_GBARE_LOADED_PROFILE}" == "$GBARE_PROFILE" ]]; then
@@ -174,6 +179,7 @@ _gbare_ensure_config() {
     GBARE_PORT="${_GBARE_CONFIG_BASELINE[3]}"
     GBARE_PATH="${_GBARE_CONFIG_BASELINE[4]}"
     GBARE_COLOR="${_GBARE_CONFIG_BASELINE[5]}"
+    GBARE_SSH_TIMEOUT="${_GBARE_CONFIG_BASELINE[6]}"
   fi
 
   _gbare_load_config

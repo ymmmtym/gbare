@@ -12,7 +12,7 @@ _gbare_repos() {
   _gbare_ensure_config
 
   local repos
-  repos=(${(f)"$(_gbare_ssh "ls -1d ${GBARE_PATH}/*.git 2>/dev/null" 2>/dev/null | sed 's/.*\///' | sed 's/\.git$//')"})
+  repos=(${(f)"$(_gbare_ssh "ls -1d $(_gbare_quote "$GBARE_PATH")/*.git 2>/dev/null" 2>/dev/null | sed 's/.*\///' | sed 's/\.git$//')"})
   _describe 'repository' repos
 }
 

@@ -20,6 +20,54 @@ oneTimeSetUp() {
 # Helper Function Tests
 # ========================================
 
+# Exercise SSH argument boundaries without a network connection.
+test_gbare_ssh_arguments() {
+  local GBARE_SSH_TIMEOUT=7
+  local GBARE_PORT
+  local expected_options=$'-o\nLogLevel=ERROR\n-o\nConnectTimeout=7\n-o\nServerAliveInterval=5\n-o\nServerAliveCountMax=2'
+  local result
+
+  for GBARE_PORT in "" 2222; do
+    result=$(
+      ssh() { print -rl -- "$@"; }
+      _gbare_ssh "echo 'hello world'"
+    )
+    local expected="$expected_options"
+    if [[ -n "$GBARE_PORT" ]]; then
+      expected+=$'\n-p\n2222'
+    fi
+    expected+=$'\ntestuser@testhost\necho \'hello world\''
+    assertEquals "$expected" "$result" "SSH argument boundaries (port: ${GBARE_PORT:-default})"
+  done
+
+  (
+    ssh() { return 255; }
+    _gbare_ssh "echo OK"
+  )
+  assertEquals 255 "$?" "SSH failure status is preserved"
+}
+
+test_gbare_list_empty_and_missing_directory() {
+  local GBARE_PATH="$_TEST_TMPDIR/empty-repos"
+  mkdir -p "$GBARE_PATH"
+  local result
+  result=$(
+    _gbare_ssh() { sh -c "$1"; }
+    _gbare_check_ssh() { return 0; }
+    _gbare_list 2>&1
+  )
+  assertEquals 0 "$?" "Empty repository directory succeeds"
+  assertContains "$result" "No repositories found" "Empty listing is explained"
+  rmdir "$GBARE_PATH"
+  result=$(
+    _gbare_ssh() { sh -c "$1"; }
+    _gbare_check_ssh() { return 0; }
+    _gbare_list 2>&1
+  )
+  assertEquals 1 "$?" "Missing repository directory fails"
+  assertContains "$result" "Failed to list repositories" "Listing errors are reported"
+}
+
 test_gbare_remote_url_without_port() {
   GBARE_PORT=""
   local result=$(_gbare_remote_url "myrepo")
@@ -47,6 +95,7 @@ test_gbare_config_output() {
   assertContains "$output" "GBARE_USER" "Config contains GBARE_USER"
   assertContains "$output" "GBARE_HOST" "Config contains GBARE_HOST"
   assertContains "$output" "GBARE_PATH" "Config contains GBARE_PATH"
+  assertContains "$output" "GBARE_SSH_TIMEOUT" "Config contains GBARE_SSH_TIMEOUT"
   assertContains "$output" "GBARE_COLOR" "Config contains GBARE_COLOR"
 }
 
@@ -55,6 +104,26 @@ test_gbare_config_values() {
   assertContains "$output" "testuser" "Config shows correct user"
   assertContains "$output" "testhost" "Config shows correct host"
   assertContains "$output" "/test/git" "Config shows correct path"
+}
+
+test_gbare_config_timeout_default() {
+  local output=$(_gbare_config)
+  assertContains "$output" "10s" "Config shows default timeout"
+}
+
+test_gbare_error_function() {
+  local output=$(_gbare_error "test error message" 2>&1)
+  assertContains "$output" "test error message" "Error function outputs message"
+}
+
+test_gbare_warn_function() {
+  local output=$(_gbare_warn "test warning message")
+  assertContains "$output" "test warning message" "Warn function outputs message"
+}
+
+test_gbare_ok_function() {
+  local output=$(_gbare_ok "test success message")
+  assertContains "$output" "test success message" "OK function outputs message"
 }
 
 # ========================================
