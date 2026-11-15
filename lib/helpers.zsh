@@ -36,3 +36,12 @@ _gbare_remote_url() {
   fi
 }
 
+
+# Repository names must identify one directory component.
+_gbare_validate_repo_name() {
+  if [[ -z "$1" || "$1" == . || "$1" == .. || "$1" == */* || "$1" == *[[:cntrl:]]* ]]; then
+    echo "✗ Invalid repository name" >&2
+    return 1
+  fi
+  return 0
+}
