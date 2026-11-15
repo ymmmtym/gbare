@@ -34,6 +34,9 @@ GBARE_CONFIG_FILE="${GBARE_CONFIG_FILE:-${HOME}/.config/gbare/config}"
 # Default: "true"
 : ${GBARE_COLOR:="true"}
 
+# SSH接続タイムアウト（秒）
+: ${GBARE_SSH_TIMEOUT:="10"}
+
 # Refresh color definitions after configuration changes.
 _gbare_init_colors() {
   if [[ "$GBARE_COLOR" == "true" ]]; then
@@ -105,6 +108,7 @@ _gbare_load_config() {
           GBARE_PORT)  export GBARE_PORT="$value" ;;
           GBARE_PATH)  export GBARE_PATH="$value" ;;
           GBARE_COLOR) export GBARE_COLOR="$value" ;;
+          GBARE_SSH_TIMEOUT) export GBARE_SSH_TIMEOUT="$value" ;;
         esac
       fi
     done < "$config_file"
@@ -143,6 +147,7 @@ _gbare_load_config() {
           GBARE_PORT)  export GBARE_PORT="$value" ;;
           GBARE_PATH)  export GBARE_PATH="$value" ;;
           GBARE_COLOR) export GBARE_COLOR="$value" ;;
+          GBARE_SSH_TIMEOUT) export GBARE_SSH_TIMEOUT="$value" ;;
         esac
       fi
     fi
