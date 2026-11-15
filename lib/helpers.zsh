@@ -29,7 +29,7 @@ _gbare_ssh() {
 _gbare_git() {
   local -a ssh_opts
   _gbare_ssh_options
-  GIT_SSH_COMMAND="ssh ${(j: :)${(qq)ssh_opts}}" GIT_SSH_VARIANT=ssh git "$@"
+  GIT_SSH_COMMAND="ssh ${(j: :)${(@q)ssh_opts}}" GIT_SSH_VARIANT=ssh git "$@"
 }
 
 # Quote a complete argument for the remote POSIX shell.
