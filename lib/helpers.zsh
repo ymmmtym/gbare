@@ -8,18 +8,40 @@
 #   command - Shell command to execute on remote server
 # Returns:
 #   Exit status of remote command
-_gbare_ssh() {
-  local -a ssh_opts=(
+_gbare_ssh_options() {
+  ssh_opts=(
     -o LogLevel=ERROR
     -o "ConnectTimeout=${GBARE_SSH_TIMEOUT}"
     -o ServerAliveInterval=5
     -o ServerAliveCountMax=2
   )
 
-  if [[ -n "$GBARE_PORT" ]]; then
-    ssh "${ssh_opts[@]}" -p ${GBARE_PORT} ${GBARE_USER}@${GBARE_HOST} "$@"
-  else
-    ssh "${ssh_opts[@]}" ${GBARE_USER}@${GBARE_HOST} "$@"
+  [[ -z "$GBARE_PORT" ]] || ssh_opts+=(-p "$GBARE_PORT")
+}
+
+_gbare_ssh() {
+  local -a ssh_opts
+  _gbare_ssh_options
+  ssh "${ssh_opts[@]}" "${GBARE_USER}@${GBARE_HOST}" "$@"
+}
+
+# Git starts its own SSH process; use the same connection policy.
+_gbare_git() {
+  local -a ssh_opts
+  _gbare_ssh_options
+  GIT_SSH_COMMAND="ssh ${(j: :)${(qq)ssh_opts}}" GIT_SSH_VARIANT=ssh git "$@"
+}
+
+# Quote a complete argument for the remote POSIX shell.
+_gbare_quote() {
+  print -r -- "${(qq)1}"
+}
+
+# Names must identify one directory beneath GBARE_PATH.
+_gbare_validate_repo_name() {
+  if [[ -z "$1" || "$1" == . || "$1" == .. || "$1" == */* || "$1" == *[[:cntrl:]]* ]]; then
+    _gbare_error "Invalid repository name"
+    return 2
   fi
 }
 
@@ -55,7 +77,8 @@ _gbare_check_ssh() {
 # Returns: 0 if present, 1 if absent, other statuses on SSH/remote errors.
 _gbare_check_repo_exists() {
   local repo_name=$1
-  _gbare_ssh -n "test -d ${GBARE_PATH}/${repo_name}.git"
+  _gbare_validate_repo_name "$repo_name" || return $?
+  _gbare_ssh -n "test -d $(_gbare_quote "${GBARE_PATH}/${repo_name}.git")"
   return $?
 }
 
@@ -78,6 +101,7 @@ _gbare_ok() {
 # Usage: _gbare_remote_url <repo_name>
 _gbare_remote_url() {
   local repo_name=$1
+  _gbare_validate_repo_name "$repo_name" || return $?
   if [[ -n "$GBARE_PORT" ]]; then
     echo "ssh://${GBARE_USER}@${GBARE_HOST}:${GBARE_PORT}${GBARE_PATH}/${repo_name}.git"
   else

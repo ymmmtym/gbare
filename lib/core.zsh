@@ -82,7 +82,7 @@ _gbare_create() {
 
   # Create bare repository on server
   local output
-  output=$(_gbare_ssh "git init --bare ${GBARE_PATH}/${repo_name}.git" 2>&1)
+  output=$(_gbare_ssh "git init --bare $(_gbare_quote "${GBARE_PATH}/${repo_name}.git")" 2>&1)
   local exit_code=$?
 
   if [[ $exit_code -eq 0 ]]; then
@@ -98,7 +98,8 @@ _gbare_create() {
     fi
 
     # Add remote
-    local remote_url=$(_gbare_remote_url "${repo_name}")
+    local remote_url
+    remote_url=$(_gbare_remote_url "${repo_name}") || return 1
     git remote add origin ${remote_url} 2>/dev/null
 
     if [[ $? -eq 0 ]]; then
@@ -144,7 +145,7 @@ _gbare_list() {
   echo ""
 
   local output
-  output=$(_gbare_ssh "find ${GBARE_PATH} -mindepth 1 -maxdepth 1 -name '*.git' -prune" 2>&1)
+  output=$(_gbare_ssh "find $(_gbare_quote "$GBARE_PATH") -mindepth 1 -maxdepth 1 -name '*.git' -prune" 2>&1)
   local exit_code=$?
 
   if [[ $exit_code -ne 0 ]]; then
@@ -199,21 +200,22 @@ _gbare_clone() {
     _gbare_error "Repository '${repo_name}.git' does not exist on ${GBARE_HOST}"
     echo ""
     echo "Available repositories:"
-    _gbare_ssh "ls -1d ${GBARE_PATH}/*.git 2>/dev/null" 2>/dev/null | sed 's/.*\///' | sed 's/\.git$//' | while read repo; do
+    _gbare_ssh "ls -1d $(_gbare_quote "$GBARE_PATH")/*.git 2>/dev/null" 2>/dev/null | sed 's/.*\///' | sed 's/\.git$//' | while read repo; do
       echo "  • $repo"
     done
     return 1
   fi
 
-  local remote_url=$(_gbare_remote_url "${repo_name}")
+  local remote_url
+  remote_url=$(_gbare_remote_url "${repo_name}") || return 1
 
   echo "Cloning from: ${remote_url}"
 
   local output
   if [[ -n "$target_dir" ]]; then
-    output=$(git clone ${remote_url} ${target_dir} 2>&1)
+    output=$(_gbare_git clone ${remote_url} ${target_dir} 2>&1)
   else
-    output=$(git clone ${remote_url} 2>&1)
+    output=$(_gbare_git clone ${remote_url} 2>&1)
   fi
   local exit_code=$?
 
@@ -273,7 +275,7 @@ _gbare_delete() {
 
   if [[ "$confirmation" == "$repo_name" ]]; then
     local output
-    output=$(_gbare_ssh "rm -rf ${GBARE_PATH}/${repo_name}.git" 2>&1)
+    output=$(_gbare_ssh "rm -rf $(_gbare_quote "${GBARE_PATH}/${repo_name}.git")" 2>&1)
     local exit_code=$?
 
     if [[ $exit_code -eq 0 ]]; then
@@ -328,7 +330,8 @@ _gbare_info() {
     return 1
   fi
 
-  local remote_url=$(_gbare_remote_url "${repo_name}")
+  local remote_url
+  remote_url=$(_gbare_remote_url "${repo_name}") || return 1
 
   echo "Repository: ${repo_name}.git"
   echo "Server: ${GBARE_HOST}"
@@ -341,7 +344,14 @@ _gbare_info() {
     echo ""
     echo "Branches and tags:"
     local output
-    output=$(_gbare_ssh "cd ${GBARE_PATH}/${repo_name}.git && git show-ref 2>/dev/null" 2>&1)
+    output=$(_gbare_ssh "cd $(_gbare_quote "${GBARE_PATH}/${repo_name}.git") && { git show-ref; result=\$?; [ \"\$result\" -eq 1 ] && exit 0; exit \"\$result\"; }" 2>&1)
+
+    local exit_code=$?
+    if [[ $exit_code -ne 0 ]]; then
+      _gbare_error "Failed to read repository references"
+      print -r -- "  Details: ${output}" >&2
+      return 1
+    fi
 
     if [[ -z "$output" ]]; then
       echo "  (empty repository)"
@@ -441,7 +451,8 @@ _gbare_remote() {
     return 1
   fi
 
-  local remote_url=$(_gbare_remote_url "${repo_name}")
+  local remote_url
+  remote_url=$(_gbare_remote_url "${repo_name}") || return 1
 
   # Confirmation
   if [[ "$auto_yes" == false ]]; then
@@ -542,7 +553,8 @@ _gbare_sync() {
   echo "${GBARE_COLOR_BLUE}Syncing repository: ${repo_name}${GBARE_COLOR_RESET}"
   echo ""
 
-  local remote_url=$(_gbare_remote_url "${repo_name}")
+  local remote_url
+  remote_url=$(_gbare_remote_url "${repo_name}") || return 1
 
   if ! git remote | grep -q "^${remote_name}$"; then
     echo "${GBARE_COLOR_YELLOW}Remote '${remote_name}' not found, adding...${GBARE_COLOR_RESET}"
@@ -551,16 +563,16 @@ _gbare_sync() {
 
   echo "${GBARE_COLOR_GREEN}Pulling latest changes...${GBARE_COLOR_RESET}"
   local branch=main
-  if ! git pull ${remote_name} "$branch" 2>/dev/null; then
+  if ! _gbare_git pull ${remote_name} "$branch" 2>/dev/null; then
     branch=master
-    if ! git pull ${remote_name} "$branch" 2>/dev/null; then
+    if ! _gbare_git pull ${remote_name} "$branch" 2>/dev/null; then
       _gbare_error "Sync failed: unable to pull main or master"
       return 1
     fi
   fi
 
   echo "${GBARE_COLOR_GREEN}Pushing local changes...${GBARE_COLOR_RESET}"
-  git push ${remote_name} "HEAD:${branch}" 2>/dev/null
+  _gbare_git push ${remote_name} "HEAD:${branch}" 2>/dev/null
 
   if [[ $? -eq 0 ]]; then
     echo ""
@@ -593,7 +605,7 @@ _gbare_backup() {
   mkdir -p "${backup_dir}/${timestamp}"
 
   local repos
-  repos=$(_gbare_ssh "find ${GBARE_PATH} -mindepth 1 -maxdepth 1 -name '*.git' -prune")
+  repos=$(_gbare_ssh "find $(_gbare_quote "$GBARE_PATH") -mindepth 1 -maxdepth 1 -name '*.git' -prune")
   local exit_code=$?
   if [[ $exit_code -ne 0 ]]; then
     _gbare_error "Failed to enumerate repositories for backup"
@@ -610,10 +622,11 @@ _gbare_backup() {
     local repo_name=$(basename "$repo_path" .git)
     echo "${GBARE_COLOR_CYAN}Backing up: ${repo_name}${GBARE_COLOR_RESET}"
 
-    local remote_url=$(_gbare_remote_url "${repo_name}")
+    local remote_url
+    remote_url=$(_gbare_remote_url "${repo_name}") || return 1
     local target="${backup_dir}/${timestamp}/${repo_name}"
 
-    git clone --mirror ${remote_url} "${target}.git" 2>/dev/null
+    _gbare_git clone --mirror ${remote_url} "${target}.git" 2>/dev/null
 
     if [[ $? -eq 0 ]]; then
       echo "${GBARE_COLOR_GREEN}  ✓ ${repo_name} backed up${GBARE_COLOR_RESET}"
@@ -654,7 +667,13 @@ _gbare_search() {
   echo "${GBARE_COLOR_BLUE}Searching repositories for: ${query}${GBARE_COLOR_RESET}"
   echo ""
 
-  local repos=$(_gbare_ssh "ls -1d ${GBARE_PATH}/*.git 2>/dev/null" 2>/dev/null)
+  local repos
+  repos=$(_gbare_ssh "find $(_gbare_quote "$GBARE_PATH") -mindepth 1 -maxdepth 1 -name '*.git' -prune")
+  local exit_code=$?
+  if [[ $exit_code -ne 0 ]]; then
+    _gbare_error "Failed to enumerate repositories for search"
+    return 1
+  fi
 
   if [[ -z "$repos" ]]; then
     echo "${GBARE_COLOR_YELLOW}No repositories found${GBARE_COLOR_RESET}"
