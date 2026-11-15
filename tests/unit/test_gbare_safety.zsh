@@ -18,6 +18,7 @@ setUp() {
     case $1 in
       init) return $init_result ;;
       remote) [[ $# == 1 ]] && echo origin; return 0 ;;
+      ls-remote) print -r -- "hash"$'\trefs/heads/'"$pull_branch" ;;
       pull) [[ $3 == $pull_branch ]] ;;
       clone) return $clone_result ;;
       *) return 0 ;;

@@ -108,3 +108,9 @@ _gbare_remote_url() {
     echo "ssh://${GBARE_USER}@${GBARE_HOST}${GBARE_PATH}/${repo_name}.git"
   fi
 }
+
+
+# Emit repository paths, succeeding with no output for an empty directory.
+_gbare_repository_paths() {
+  _gbare_ssh "test -d ${(qq)GBARE_PATH} && for repo in ${(qq)GBARE_PATH}/*.git; do [ -d \"\$repo\" ] || continue; printf '%s\\n' \"\$repo\"; done"
+}

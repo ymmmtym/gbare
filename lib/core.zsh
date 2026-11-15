@@ -82,7 +82,7 @@ _gbare_create() {
 
   # Create bare repository on server
   local output
-  output=$(_gbare_ssh "git init --bare $(_gbare_quote "${GBARE_PATH}/${repo_name}.git")" 2>&1)
+  output=$(_gbare_ssh "git init --bare -- $(_gbare_quote "${GBARE_PATH}/${repo_name}.git")" 2>&1)
   local exit_code=$?
 
   if [[ $exit_code -eq 0 ]]; then
@@ -105,7 +105,8 @@ _gbare_create() {
     if [[ $? -eq 0 ]]; then
       _gbare_ok "Remote 'origin' added"
     else
-      _gbare_warn "Remote 'origin' already exists"
+      _gbare_error "Failed to add remote 'origin'"
+      return 1
     fi
 
     echo ""
@@ -145,7 +146,7 @@ _gbare_list() {
   echo ""
 
   local output
-  output=$(_gbare_ssh "find $(_gbare_quote "$GBARE_PATH") -mindepth 1 -maxdepth 1 -name '*.git' -prune" 2>&1)
+  output=$(_gbare_repository_paths 2>&1)
   local exit_code=$?
 
   if [[ $exit_code -ne 0 ]]; then
@@ -279,7 +280,7 @@ _gbare_delete() {
 
   if [[ "$confirmation" == "$repo_name" ]]; then
     local output
-    output=$(_gbare_ssh "rm -rf $(_gbare_quote "${GBARE_PATH}/${repo_name}.git")" 2>&1)
+    output=$(_gbare_ssh "rm -rf -- $(_gbare_quote "${GBARE_PATH}/${repo_name}.git")" 2>&1)
     local exit_code=$?
 
     if [[ $exit_code -eq 0 ]]; then
@@ -569,14 +570,21 @@ _gbare_sync() {
     git remote add ${remote_name} ${remote_url}
   fi
 
-  echo "${GBARE_COLOR_GREEN}Pulling latest changes...${GBARE_COLOR_RESET}"
-  local branch=main
-  if ! _gbare_git pull ${remote_name} "$branch" 2>/dev/null; then
+  # Prefer main when present; otherwise retain the master fallback.
+  local branch=main remote_heads
+  if ! remote_heads=$(_gbare_git ls-remote --heads "${remote_name}" refs/heads/main refs/heads/master); then
+    echo "${GBARE_COLOR_RED}✗ Failed to determine remote branch${GBARE_COLOR_RESET}"
+    return 1
+  fi
+  if [[ "$remote_heads" != *$'\trefs/heads/main'* &&
+        "$remote_heads" == *$'\trefs/heads/master'* ]]; then
     branch=master
-    if ! _gbare_git pull ${remote_name} "$branch" 2>/dev/null; then
-      _gbare_error "Sync failed: unable to pull main or master"
-      return 1
-    fi
+  fi
+
+  echo "${GBARE_COLOR_GREEN}Pulling latest changes...${GBARE_COLOR_RESET}"
+  if ! _gbare_git pull "${remote_name}" "$branch" 2>/dev/null; then
+    _gbare_error "Sync failed: unable to pull ${branch}"
+    return 1
   fi
 
   echo "${GBARE_COLOR_GREEN}Pushing local changes...${GBARE_COLOR_RESET}"
@@ -613,7 +621,7 @@ _gbare_backup() {
   mkdir -p "${backup_dir}/${timestamp}"
 
   local repos
-  repos=$(_gbare_ssh "find $(_gbare_quote "$GBARE_PATH") -mindepth 1 -maxdepth 1 -name '*.git' -prune")
+  repos=$(_gbare_repository_paths)
   local exit_code=$?
   if [[ $exit_code -ne 0 ]]; then
     _gbare_error "Failed to enumerate repositories for backup"
@@ -676,7 +684,7 @@ _gbare_search() {
   echo ""
 
   local repos
-  repos=$(_gbare_ssh "find $(_gbare_quote "$GBARE_PATH") -mindepth 1 -maxdepth 1 -name '*.git' -prune")
+  repos=$(_gbare_repository_paths)
   local exit_code=$?
   if [[ $exit_code -ne 0 ]]; then
     _gbare_error "Failed to enumerate repositories for search"

@@ -71,6 +71,7 @@ test_sync_uses_pulled_branch() {
       print -r -- "$*" >> "${_TEST_TMPDIR}/calls"
       case $1 in
         remote) print origin ;;
+        ls-remote) print -r -- "hash"$'\trefs/heads/'"$chosen" ;;
         pull) [[ $3 == "$chosen" ]] ;;
         push) return 0 ;;
       esac

@@ -1,3 +1,9 @@
+# Check before using path modifiers that older zsh releases do not support.
+if ! autoload -Uz is-at-least || ! is-at-least 5.0; then
+  echo "gbare requires zsh 5.0 or later (current: ${ZSH_VERSION:-unknown})" >&2
+  return 1
+fi
+
 # ========================================
 # gbare - Bare Repository Manager
 # Manage bare Git repositories on remote servers
