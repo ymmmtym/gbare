@@ -183,6 +183,8 @@ _gbare_clone() {
     return 1
   fi
 
+  _gbare_validate_repo_name "$repo_name" || return 1
+
   # SSH接続チェック
   if ! _gbare_check_ssh; then
     return 1
@@ -249,6 +251,8 @@ _gbare_delete() {
     return 1
   fi
 
+  _gbare_validate_repo_name "$repo_name" || return 1
+
   # SSH接続チェック
   if ! _gbare_check_ssh; then
     return 1
@@ -311,6 +315,8 @@ _gbare_info() {
     echo "Usage: gbare info <repository-name>"
     return 1
   fi
+
+  _gbare_validate_repo_name "$repo_name" || return 1
 
   # SSH接続チェック
   if ! _gbare_check_ssh; then
@@ -432,6 +438,8 @@ _gbare_remote() {
     _gbare_error "Not a git repository (no .git directory found)"
     return 1
   fi
+
+  _gbare_validate_repo_name "$repo_name" || return 1
 
   # SSH接続チェック
   if ! _gbare_check_ssh; then

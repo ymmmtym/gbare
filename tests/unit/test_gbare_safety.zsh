@@ -26,6 +26,8 @@ setUp() {
 }
 test_remote_paths() {
   # Execute generated commands with a POSIX shell and real Git/filesystem.
+  _gbare_check_ssh() { return 0; }
+  _gbare_check_repo_exists() { [[ -d "${GBARE_PATH}/$1.git" ]]; }
   _gbare_ssh() { sh -c "$1"; }
   mkdir -p "$GBARE_PATH" .git
   local name='space '\''; touch INJECTED; $(touch SUBSTITUTED)'
@@ -50,6 +52,8 @@ test_invalid_names() {
   assertEquals '' "$(cat calls)" 'no remote calls'
 }
 test_init_failure() {
+  _gbare_check_ssh() { return 0; }
+  _gbare_check_repo_exists() { return 1; }
   init_result=1
   local output
   output=$(_gbare_create repo -y)
@@ -58,11 +62,15 @@ test_init_failure() {
   assertEquals init "$(cat calls)" 'no remote add after init failure'
 }
 test_init_success() {
+  _gbare_check_ssh() { return 0; }
+  _gbare_check_repo_exists() { return 1; }
   _gbare_create repo -y >/dev/null
   assertEquals 0 $? 'create succeeds'
   assertContains "$(cat calls)" 'remote add origin' 'remote added after init'
 }
 test_sync_branch() {
+  _gbare_check_ssh() { return 0; }
+  _gbare_check_repo_exists() { return 0; }
   mkdir .git
   local branch result
   for branch in main master missing; do
@@ -81,7 +89,9 @@ test_sync_branch() {
   done
 }
 test_backup_status() {
+  _gbare_check_repo_exists() { return 1; }
   local output
+  _gbare_check_ssh() { return $ssh_result; }
   ssh_result=255
   output=$(_gbare_backup backups)
   assertEquals 1 $? 'SSH failure propagates'
@@ -102,6 +112,7 @@ test_backup_status() {
   assertContains "$output" 'Backup completed' 'completion on success'
 }
 test_inventory_command() {
+  _gbare_check_ssh() { return 0; }
   _gbare_ssh() { sh -c "$1"; }
   mkdir -p "$GBARE_PATH"
   _gbare_backup backups >/dev/null
@@ -115,6 +126,7 @@ test_inventory_command() {
   assertEquals 1 $? 'missing directory fails'
 }
 test_literal_search() {
+  _gbare_check_ssh() { return 0; }
   inventory=$'/git/Foo.Bar.git\n/git/fooXbar.git\n/git/-option.git\n/git/[bracket].git'
   local output query
   for query in FOO.BAR -option '['; do
