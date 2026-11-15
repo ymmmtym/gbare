@@ -1,10 +1,7 @@
-# 最小バージョンチェック（zsh 4.3以上が必要）
-if [[ -z "$ZSH_VERSION" ]] || {
-  local -a ver; ver=(${(s:.:)ZSH_VERSION})
-  (( ver[1] < 4 || (ver[1] == 4 && (ver[2] < 3)) ))
-}; then
-  echo "gbare requires zsh 4.3 or later (current: ${ZSH_VERSION:-unknown})" >&2
-  return 1 2>/dev/null || exit 1
+# Check before using path modifiers that older zsh releases do not support.
+if ! autoload -Uz is-at-least || ! is-at-least 5.0; then
+  echo "gbare requires zsh 5.0 or later (current: ${ZSH_VERSION:-unknown})" >&2
+  return 1
 fi
 
 # ========================================

@@ -64,25 +64,30 @@ _gbare_create() {
   echo "Creating bare repository: ${repo_name}.git"
 
   # Create bare repository on server
-  _gbare_ssh "git init --bare ${GBARE_PATH}/${repo_name}.git"
+  local repo_path="${GBARE_PATH}/${repo_name}.git"
+  _gbare_ssh "git init --bare -- ${(qq)repo_path}"
 
   if [[ $? -eq 0 ]]; then
     echo "✓ Bare repository created on ${GBARE_HOST}"
 
     # Initialize local repo if not already a git repo
     if [[ ! -d .git ]]; then
-      git init
+      if ! git init; then
+        echo "✗ Failed to initialize local repository"
+        return 1
+      fi
       echo "✓ Local repository initialized"
     fi
 
     # Add remote
     local remote_url=$(_gbare_remote_url "${repo_name}")
-    git remote add origin ${remote_url} 2>/dev/null
+    git remote add origin "${remote_url}"
 
     if [[ $? -eq 0 ]]; then
       echo "✓ Remote 'origin' added"
     else
-      echo "⚠ Remote 'origin' already exists"
+      echo "✗ Failed to add remote 'origin'"
+      return 1
     fi
 
     echo ""
@@ -113,7 +118,11 @@ _gbare_list() {
   echo "Bare repositories on ${GBARE_HOST}:"
   echo ""
 
-  local repos=$(_gbare_ssh "ls -1d ${GBARE_PATH}/*.git 2>/dev/null" 2>/dev/null)
+  local repos
+  if ! repos=$(_gbare_repository_paths); then
+    echo "✗ Failed to list repositories on ${GBARE_HOST}" >&2
+    return 1
+  fi
 
   if [[ -z "$repos" ]]; then
     echo "No repositories found"
@@ -183,7 +192,8 @@ _gbare_delete() {
   read confirmation
 
   if [[ "$confirmation" == "$repo_name" ]]; then
-    _gbare_ssh "rm -rf ${GBARE_PATH}/${repo_name}.git"
+    local repo_path="${GBARE_PATH}/${repo_name}.git"
+    _gbare_ssh "rm -rf -- ${(qq)repo_path}"
 
     if [[ $? -eq 0 ]]; then
       echo "✓ Repository deleted: ${repo_name}.git"
@@ -230,7 +240,8 @@ _gbare_info() {
   if command -v git >/dev/null 2>&1; then
     echo ""
     echo "Branches and tags:"
-    _gbare_ssh "cd ${GBARE_PATH}/${repo_name}.git && git show-ref 2>/dev/null" 2>/dev/null
+    local repo_path="${GBARE_PATH}/${repo_name}.git"
+    _gbare_ssh "cd ${(qq)repo_path} && git show-ref 2>/dev/null" 2>/dev/null
 
     if [[ $? -ne 0 ]]; then
       echo "  (empty repository or connection failed)"
@@ -412,11 +423,22 @@ _gbare_sync() {
     git remote add ${remote_name} ${remote_url}
   fi
 
+  # Prefer main when present; otherwise retain the master fallback.
+  local branch=main remote_heads
+  if ! remote_heads=$(git ls-remote --heads "${remote_name}" refs/heads/main refs/heads/master); then
+    echo "${GBARE_COLOR_RED}✗ Failed to determine remote branch${GBARE_COLOR_RESET}"
+    return 1
+  fi
+  if [[ "$remote_heads" != *$'\trefs/heads/main'* &&
+        "$remote_heads" == *$'\trefs/heads/master'* ]]; then
+    branch=master
+  fi
+
   echo "${GBARE_COLOR_GREEN}Pulling latest changes...${GBARE_COLOR_RESET}"
-  git pull ${remote_name} main 2>/dev/null || git pull ${remote_name} master 2>/dev/null
+  git pull "${remote_name}" "$branch" 2>/dev/null
 
   echo "${GBARE_COLOR_GREEN}Pushing local changes...${GBARE_COLOR_RESET}"
-  git push ${remote_name} HEAD:main 2>/dev/null || git push ${remote_name} HEAD:master 2>/dev/null
+  git push "${remote_name}" "HEAD:${branch}" 2>/dev/null
 
   if [[ $? -eq 0 ]]; then
     echo ""
@@ -448,14 +470,19 @@ _gbare_backup() {
 
   mkdir -p "${backup_dir}/${timestamp}"
 
-  local repos=$(_gbare_ssh "ls -1d ${GBARE_PATH}/*.git 2>/dev/null" 2>/dev/null)
+  local repos
+  if ! repos=$(_gbare_repository_paths); then
+    echo "✗ Failed to list repositories on ${GBARE_HOST}" >&2
+    return 1
+  fi
 
   if [[ -z "$repos" ]]; then
     echo "${GBARE_COLOR_YELLOW}No repositories found to backup${GBARE_COLOR_RESET}"
     return 0
   fi
 
-  echo "$repos" | while read repo_path; do
+  local failed=0
+  echo "$repos" | while IFS= read -r repo_path; do
     local repo_name=$(basename "$repo_path" .git)
     echo "${GBARE_COLOR_CYAN}Backing up: ${repo_name}${GBARE_COLOR_RESET}"
 
@@ -468,11 +495,13 @@ _gbare_backup() {
       echo "${GBARE_COLOR_GREEN}  ✓ ${repo_name} backed up${GBARE_COLOR_RESET}"
     else
       echo "${GBARE_COLOR_RED}  ✗ Failed to backup ${repo_name}${GBARE_COLOR_RESET}"
+      failed=1
     fi
   done
 
   echo ""
   echo "${GBARE_COLOR_GREEN}✓ Backup completed: ${backup_dir}/${timestamp}${GBARE_COLOR_RESET}"
+  return $failed
 }
 
 # Search repositories by name
@@ -497,7 +526,11 @@ _gbare_search() {
   echo "${GBARE_COLOR_BLUE}Searching repositories for: ${query}${GBARE_COLOR_RESET}"
   echo ""
 
-  local repos=$(_gbare_ssh "ls -1d ${GBARE_PATH}/*.git 2>/dev/null" 2>/dev/null)
+  local repos
+  if ! repos=$(_gbare_repository_paths); then
+    echo "✗ Failed to list repositories on ${GBARE_HOST}" >&2
+    return 1
+  fi
 
   if [[ -z "$repos" ]]; then
     echo "${GBARE_COLOR_YELLOW}No repositories found${GBARE_COLOR_RESET}"
@@ -506,7 +539,7 @@ _gbare_search() {
 
   local found=0
   echo "$repos" | sed 's/.*\///' | sed 's/\.git$//' | while read repo; do
-    if echo "$repo" | grep -i "$query" > /dev/null 2>&1; then
+    if echo "$repo" | grep -iF -e "$query" > /dev/null 2>&1; then
       echo "${GBARE_COLOR_GREEN}  • $repo${GBARE_COLOR_RESET}"
       found=1
     fi

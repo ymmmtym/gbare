@@ -15,7 +15,13 @@ GitHub の `gh` CLI のように、シンプルなコマンドでベアリポジ
 
 ## 必要要件
 
-- zsh 4.3 以降
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:9a9ca2cbd6ad3bbd768f62cc15ecc258b4e5c479d334e20b671732a7c88a51c0 -->
+
+- zsh 5.0 以降
+
+<!-- /coderabbit-ai-generated:v1 -->
 - git
 - SSH アクセス可能なサーバー（Linux または Synology NAS など）
 
