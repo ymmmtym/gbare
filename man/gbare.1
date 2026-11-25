@@ -25,9 +25,11 @@ The \fB--refresh\fR flag ignores the cached listing and re-enumerates the server
 Clone a repository from the remote server.
 If \fIdirectory\fR is specified, clones into that directory.
 .TP
-.BR clone ", " cl " [" -j "|" --jobs " " n "] <" name ">..."
+.BR clone ", " cl " -j "|" --jobs " " n " <" name ">..."
 Clone several repositories at once, \fIn\fR workers at a time.
 Every positional argument is then a repository name.
+The jobs flag is required: without it, two arguments mean the single
+repository form "clone <name> <directory>".
 .TP
 .BR delete ", " rm ", " d " <" name ">...
 Delete one or more repositories from the remote server.

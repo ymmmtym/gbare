@@ -121,9 +121,23 @@ _gbare_cache_enabled() {
 }
 
 # One cache entry per server and path, so switching profiles never mixes lists.
+# Every byte of the key is escaped, because replacing punctuation with "_" makes
+# /srv/team_a and /srv/team/a share an entry.
+_gbare_cache_key() {
+  local key="${GBARE_USER}@${GBARE_HOST}:${GBARE_PORT-<unset>}:${GBARE_PATH}"
+  local encoded="" char
+  for char in ${(s::)key}; do
+    if [[ $char == [A-Za-z0-9._-] ]]; then
+      encoded+=$char
+    else
+      encoded+=$(printf '%%%02X' $(( #char )))
+    fi
+  done
+  print -r -- "$encoded"
+}
+
 _gbare_cache_file() {
-  local key="${GBARE_USER}@${GBARE_HOST}:${GBARE_PORT:-22}:${GBARE_PATH}"
-  print -r -- "${GBARE_CACHE_DIR}/${${key}//[^A-Za-z0-9._-]/_}.repos"
+  print -r -- "${GBARE_CACHE_DIR}/$(_gbare_cache_key).repos"
 }
 
 # Print the cached listing when the entry is younger than GBARE_CACHE_TTL.
@@ -145,24 +159,33 @@ _gbare_cache_read() {
   cat -- "$file"
 }
 
+# The listing holds private repository names, so the directory and the entry are
+# created owner-only rather than inheriting a group/world-readable umask.
 _gbare_cache_store() {
   _gbare_cache_enabled || return 0
 
   local file dir
   file=$(_gbare_cache_file)
   dir=${file:h}
-  mkdir -p -- "$dir" 2>/dev/null || return 0
+  [[ -d "$dir" ]] || mkdir -p -m 700 -- "$dir" 2>/dev/null || return 0
 
   local tmp="${file}.$$"
   if print -r -- "$1" >| "$tmp" 2>/dev/null; then
+    chmod 600 -- "$tmp" 2>/dev/null
     mv -f -- "$tmp" "$file" 2>/dev/null || rm -f -- "$tmp"
   fi
   return 0
 }
 
 # Drop the cached listing; call after any change to the remote repository set.
+# Bumping the stored generation also discards listings that were already in
+# flight, so a slow fetch cannot republish what this call just invalidated.
 _gbare_cache_invalidate() {
-  rm -f -- "$(_gbare_cache_file)" 2>/dev/null
+  local file
+  file=$(_gbare_cache_file)
+  zmodload zsh/datetime 2>/dev/null
+  print -r -- "${EPOCHSECONDS}.${RANDOM}" >| "${file}.gen" 2>/dev/null
+  rm -f -- "$file" 2>/dev/null
   return 0
 }
 
@@ -183,14 +206,26 @@ _gbare_repository_paths() {
     return 0
   fi
 
-  # find keeps the result independent of the remote shell's unset-glob
-  # behaviour, which differs between sh and zsh remotes. A missing base path
-  # still fails, so a mistyped GBARE_PATH is reported instead of looking empty.
-  if ! listing=$(_gbare_ssh "test -d ${(qq)GBARE_PATH} && find ${(qq)GBARE_PATH} -mindepth 1 -maxdepth 1 -type d -name '*.git' | LC_ALL=C sort"); then
+  local key file generation
+  key=$(_gbare_cache_key)
+  file="${GBARE_CACHE_DIR}/${key}.repos"
+  generation=$(cat -- "${file}.gen" 2>/dev/null)
+
+  # -H follows the configured root when it is itself a symlink, while children
+  # stay unfollowed. find is used instead of a glob because the remote shell may
+  # be zsh, where an unmatched *.git pattern is an error rather than empty.
+  # Sorting happens locally: piping to sort on the remote would make the pipeline
+  # status sort's, hiding a find failure as an empty inventory.
+  if ! listing=$(_gbare_ssh "test -d ${(qq)GBARE_PATH} && find -H ${(qq)GBARE_PATH} -mindepth 1 -maxdepth 1 -type d -name '*.git'"); then
     return 1
   fi
+  listing=$(print -r -- "$listing" | LC_ALL=C sort)
 
-  [[ $use_cache == false ]] || _gbare_cache_store "$listing"
+  # Publish only if no mutation invalidated this key while the fetch ran.
+  if [[ $use_cache == true ]] &&
+     [[ "$(cat -- "${file}.gen" 2>/dev/null)" == "$generation" ]]; then
+    _gbare_cache_store "$listing"
+  fi
 
   [[ -z "$listing" ]] || print -r -- "$listing"
   return 0

@@ -155,18 +155,23 @@ _gbare_list() {
     esac
   done
 
-  # SSH接続チェック
-  if ! _gbare_check_ssh; then
-    return 1
-  fi
-
   echo "Bare repositories on ${GBARE_HOST}:"
   echo ""
 
+  # A fresh cache entry answers without SSH, so only the server-contacting paths
+  # probe the connection; otherwise an unreachable host would fail a cached list.
   local output
   if [[ $refresh == true ]]; then
+    if ! _gbare_check_ssh; then
+      return 1
+    fi
     output=$(_gbare_repository_paths --refresh 2>&1)
   else
+    if ! _gbare_cache_read >/dev/null; then
+      if ! _gbare_check_ssh; then
+        return 1
+      fi
+    fi
     output=$(_gbare_repository_paths 2>&1)
   fi
   local exit_code=$?
@@ -460,7 +465,8 @@ _gbare_delete() {
   done
   echo ""
   echo -n "Type 'yes' to confirm: "
-  read confirmation
+  # -r and an empty IFS keep backslashes and padding, so only a bare "yes" passes.
+  IFS= read -r confirmation
   if [[ "$confirmation" != yes ]]; then
     echo "Cancelled"
     return 0
@@ -745,6 +751,7 @@ _gbare_config() {
   echo "  GBARE_PATH: ${GBARE_PATH}"
   echo "  GBARE_COLOR: ${GBARE_COLOR}"
   echo "  GBARE_SSH_TIMEOUT: ${GBARE_SSH_TIMEOUT}s"
+  echo ""
   if _gbare_cache_enabled; then
     echo "  GBARE_CACHE_TTL: ${GBARE_CACHE_TTL}s"
   else
@@ -753,7 +760,10 @@ _gbare_config() {
   echo "  GBARE_CACHE_DIR: ${GBARE_CACHE_DIR}"
   echo "  GBARE_JOBS: ${GBARE_JOBS}"
   echo ""
-  echo "Set these in your ~/.zshrc, Sheldon plugins.toml, or config file"
+  echo "The three settings above are environment variables only; the config file"
+  echo "does not read them."
+  echo ""
+  echo "Set the server settings in your ~/.zshrc, Sheldon plugins.toml, or config file"
   echo ""
   echo "Use 'gbare profiles' to list available profiles"
 }
@@ -878,8 +888,10 @@ _gbare_backup() {
 
   mkdir -p "${backup_dir}/${timestamp}"
 
+  # A backup must be complete, so it never trusts a cached inventory: a listing
+  # taken before another client pushed would silently skip that repository.
   local repos
-  repos=$(_gbare_repository_paths)
+  repos=$(_gbare_repository_paths --refresh)
   local exit_code=$?
   if [[ $exit_code -ne 0 ]]; then
     _gbare_error "Failed to enumerate repositories for backup"
@@ -1094,6 +1106,8 @@ gbare() {
       echo "  GBARE_PATH      - Path to git repositories (default: /volume1/homes/\${GBARE_USER}/git)"
       echo "  GBARE_PROFILE   - Active profile name (default: default)"
       echo "  GBARE_COLOR     - Enable color output (default: true)"
+      echo ""
+      echo "Performance (environment variables only, not read from the config file):"
       echo "  GBARE_CACHE_TTL - Repository list cache seconds (default: 0 = disabled)"
       echo "  GBARE_CACHE_DIR - Cache location (default: \$XDG_CACHE_HOME/gbare)"
       echo "  GBARE_JOBS      - Parallel workers for batch commands (default: 1)"

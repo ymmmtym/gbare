@@ -115,6 +115,104 @@ test_cache_read_reports_miss_when_absent() {
   assertFalse 'Miss without a stored entry' '_gbare_cache_read'
 }
 
+test_cache_key_separates_similar_paths() {
+  GBARE_PATH="/srv/team_a"
+  local underscore
+  underscore=$(_gbare_cache_file)
+  GBARE_PATH="/srv/team/a"
+  local nested
+  nested=$(_gbare_cache_file)
+
+  assertTrue 'Distinct paths get distinct entries' '[[ "$underscore" != "$nested" ]]'
+  assertEquals "" "$(print -r -- "$nested" | tr -d 'A-Za-z0-9._-/')" "Path separators are escaped"
+}
+
+test_cache_key_separates_unset_and_explicit_port() {
+  GBARE_PORT=""
+  local unset_port
+  unset_port=$(_gbare_cache_file)
+  GBARE_PORT="22"
+  local explicit_port
+  explicit_port=$(_gbare_cache_file)
+
+  assertTrue 'Unset port differs from port 22' '[[ "$unset_port" != "$explicit_port" ]]'
+}
+
+test_cache_entries_are_owner_only() {
+  GBARE_CACHE_TTL=60
+  _gbare_repository_paths >/dev/null
+
+  local file mode dir_mode
+  file=$(_gbare_cache_file)
+  mode=$(stat -c '%a' -- "$file")
+  dir_mode=$(stat -c '%a' -- "${file:h}")
+
+  assertEquals "600" "$mode" "Cached listing is owner-only"
+  assertEquals "700" "$dir_mode" "Cache directory is owner-only"
+}
+
+test_list_skips_ssh_probe_on_cache_hit() {
+  GBARE_CACHE_TTL=60
+  _gbare_repository_paths >/dev/null
+  _gbare_check_ssh() { return 1; }
+
+  local output
+  output=$(_gbare_list 2>&1)
+  assertEquals 0 $? "Cached listing works without a reachable server"
+  assertContains "$output" "one" "Cached repository shown"
+}
+
+test_list_probes_ssh_when_cache_is_empty() {
+  _gbare_check_ssh() { return 1; }
+
+  _gbare_list >/dev/null 2>&1
+  assertEquals 1 $? "Cold cache requires a working connection"
+}
+
+test_backup_ignores_cached_listing() {
+  GBARE_CACHE_TTL=60
+  _gbare_repository_paths >/dev/null
+  # A repository added after the cache was filled must still be backed up.
+  _gbare_ssh() {
+    print -r -- x >> ssh_calls
+    print -r -- "${GBARE_PATH}/three.git"
+  }
+  _gbare_git() { mkdir -p "${@: -1}"; }
+
+  _gbare_backup "${_TEST_TMPDIR}/bk" >/dev/null 2>&1
+  assertEquals 0 $? "Backup succeeds"
+  assertContains "$(print -l -- "${_TEST_TMPDIR}"/bk/*/three.git(N))" "three.git" "Repository added after caching is backed up"
+}
+
+test_enumeration_failure_is_not_an_empty_inventory() {
+  _gbare_ssh() { return 1; }
+  assertFalse 'Unreadable root fails' '_gbare_repository_paths'
+}
+
+test_invalidate_discards_in_flight_listing() {
+  GBARE_CACHE_TTL=60
+  local file
+  file=$(_gbare_cache_file)
+  mkdir -p "${file:h}"
+
+  _gbare_cache_invalidate
+  local generation
+  generation=$(cat -- "${file}.gen")
+
+  _gbare_cache_invalidate
+  assertTrue 'Generation advances on invalidate' '[[ "$(cat -- "${file}.gen")" != "$generation" ]]'
+}
+
+test_batch_delete_requires_literal_yes() {
+  local output
+  output=$(print -r -- '\yes' | _gbare_delete -j 2 one two 2>&1)
+  assertEquals 0 $? "Cancelling is not an error"
+  assertContains "$output" "Cancelled" "Backslash input does not confirm"
+
+  output=$(print -r -- ' yes ' | _gbare_delete -j 2 one two 2>&1)
+  assertContains "$output" "Cancelled" "Padded input does not confirm"
+}
+
 # ========================================
 # Parallel execution
 # ========================================
