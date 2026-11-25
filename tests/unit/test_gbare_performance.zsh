@@ -162,6 +162,28 @@ test_cache_entries_are_owner_only() {
   assertEquals "700" "$dir_mode" "Cache directory is owner-only"
 }
 
+test_cache_store_does_not_expose_temp_file() {
+  GBARE_CACHE_TTL=60
+  local file
+  file=$(_gbare_cache_file)
+  mkdir -p "${file:h}"
+
+  # The entry must be private from the moment it exists, not chmod-ed afterwards.
+  ( umask 022; _gbare_cache_store "listing" )
+  assertEquals "600" "$(stat -c '%a' -- "$file")" "Entry is private even under umask 022"
+}
+
+test_cache_store_tightens_existing_directory() {
+  GBARE_CACHE_TTL=60
+  local file
+  file=$(_gbare_cache_file)
+  mkdir -p "${file:h}"
+  chmod 755 "${file:h}"
+
+  _gbare_cache_store "listing"
+  assertEquals "700" "$(stat -c '%a' -- "${file:h}")" "Owned cache directory is tightened"
+}
+
 test_list_skips_ssh_probe_on_cache_hit() {
   GBARE_CACHE_TTL=60
   _gbare_repository_paths >/dev/null

@@ -168,11 +168,17 @@ _gbare_cache_store() {
   local file dir
   file=$(_gbare_cache_file)
   dir=${file:h}
-  [[ -d "$dir" ]] || mkdir -p -m 700 -- "$dir" 2>/dev/null || return 0
+  # An existing directory is tightened too, but only when we own it.
+  if [[ -d "$dir" ]]; then
+    [[ -O "$dir" ]] && chmod 700 -- "$dir" 2>/dev/null
+  else
+    mkdir -p -m 700 -- "$dir" 2>/dev/null || return 0
+  fi
 
   local tmp="${file}.$$"
-  if print -r -- "$1" >| "$tmp" 2>/dev/null; then
-    chmod 600 -- "$tmp" 2>/dev/null
+  # Write under umask 077 rather than chmod-ing afterwards, so the listing is not
+  # readable by another account even for the instant before the rename.
+  if (umask 077 && print -r -- "$1" >| "$tmp") 2>/dev/null; then
     mv -f -- "$tmp" "$file" 2>/dev/null || rm -f -- "$tmp"
   fi
   return 0
