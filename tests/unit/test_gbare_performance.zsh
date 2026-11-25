@@ -189,22 +189,53 @@ test_cache_store_does_not_follow_planted_symlink() {
   assertEquals "private repo names" "$(cat -- "$file")" "Listing is still cached"
 }
 
-test_cache_invalidate_creates_directory_for_generation() {
+test_cache_fetch_establishes_generation_marker() {
   GBARE_CACHE_TTL=60
   local file
   file=$(_gbare_cache_file)
   assertFalse "Cache directory starts absent" "[[ -d ${(q)GBARE_CACHE_DIR} ]]"
 
-  _gbare_cache_invalidate
+  _gbare_repository_paths >/dev/null
   assertTrue "Generation marker is recorded" "[[ -f ${(q)file}.gen ]]"
 }
 
-test_cache_invalidate_is_noop_when_disabled() {
-  GBARE_CACHE_TTL=0
+test_cache_invalidate_creates_no_directory() {
+  GBARE_CACHE_TTL=60
+  _gbare_cache_invalidate
+  assertFalse "Invalidation alone does not create the cache directory" \
+    "[[ -d ${(q)GBARE_CACHE_DIR} ]]"
+}
+
+test_successful_mutation_drops_listing_while_caching_disabled() {
+  # A shell with a positive TTL shares the directory with one that mutates with
+  # caching off; the mutation must still drop the listing the first shell uses.
   local file
   file=$(_gbare_cache_file)
+  GBARE_CACHE_TTL=60
+  _gbare_repository_paths >/dev/null
+  assertTrue "Listing is cached" "[[ -f ${(q)file} ]]"
+
+  GBARE_CACHE_TTL=0
   _gbare_cache_invalidate
-  assertFalse "No directory is created when caching is off" "[[ -d ${(q)GBARE_CACHE_DIR} ]]"
+  assertFalse "Listing is dropped despite caching being off" "[[ -f ${(q)file} ]]"
+}
+
+test_mutation_during_fetch_prevents_publish() {
+  GBARE_CACHE_TTL=60
+  local file
+  file=$(_gbare_cache_file)
+  mkdir -p "${file:h}"
+  _gbare_cache_invalidate
+
+  # A mutation landing mid-fetch bumps the generation; this fetch must not
+  # publish a listing that predates it.
+  _gbare_ssh() {
+    print -r -- "${GBARE_PATH}/one.git"
+    GBARE_CACHE_TTL=60 _gbare_cache_invalidate
+  }
+  _gbare_repository_paths >/dev/null
+  assertFalse "Fetch declines to publish after a concurrent mutation" \
+    "[[ -f ${(q)file} ]]"
 }
 
 test_cache_store_tightens_existing_directory() {

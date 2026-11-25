@@ -193,13 +193,13 @@ _gbare_cache_store() {
 # Bumping the stored generation also discards listings that were already in
 # flight, so a slow fetch cannot republish what this call just invalidated.
 _gbare_cache_invalidate() {
-  _gbare_cache_enabled || return 0
-
   local file
   file=$(_gbare_cache_file)
-  # Without the directory the marker would not be recorded, and a concurrent
-  # fetch would publish a listing that predates this invalidation.
-  mkdir -p -m 700 -- "${file:h}" 2>/dev/null
+  # A shell that mutates without caching may still share GBARE_CACHE_DIR with one
+  # that caches, so invalidate even when caching is disabled here. Nothing to
+  # discard means nothing to do, and no directory is created for a cache miss.
+  [[ -d "${file:h}" ]] || return 0
+
   zmodload zsh/datetime 2>/dev/null
   print -r -- "${EPOCHSECONDS}.${RANDOM}" >| "${file}.gen" 2>/dev/null
   rm -f -- "$file" 2>/dev/null
@@ -223,9 +223,19 @@ _gbare_repository_paths() {
     return 0
   fi
 
-  local key file generation
+  local key file generation dir
   key=$(_gbare_cache_key)
   file="${GBARE_CACHE_DIR}/${key}.repos"
+  dir=${file:h}
+
+  # Establish the generation baseline before enumerating, so a mutation that
+  # happens mid-fetch changes it and this fetch declines to publish. The marker
+  # has to exist year-round: a mutating shell may run with caching disabled and
+  # only bumps an existing marker rather than creating the directory itself.
+  if [[ $use_cache == true ]]; then
+    mkdir -p -m 700 -- "$dir" 2>/dev/null
+    [[ -f "${file}.gen" ]] || _gbare_cache_invalidate
+  fi
   generation=$(cat -- "${file}.gen" 2>/dev/null)
 
   # -H follows the configured root when it is itself a symlink, while children
