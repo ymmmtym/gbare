@@ -124,7 +124,18 @@ test_cache_key_separates_similar_paths() {
   nested=$(_gbare_cache_file)
 
   assertTrue 'Distinct paths get distinct entries' '[[ "$underscore" != "$nested" ]]'
-  assertEquals "" "$(print -r -- "$nested" | tr -d 'A-Za-z0-9._-/')" "Path separators are escaped"
+  assertEquals "" "$(print -r -- "${nested:t}" | tr -d 'A-Za-z0-9._-')" "Key is hex only, no raw separator"
+}
+
+test_cache_key_has_fixed_length() {
+  local short long
+  GBARE_PATH="/srv/git"
+  short=$(_gbare_cache_file)
+  GBARE_PATH="/$(printf 'a%.0s' {1..240})"
+  long=$(_gbare_cache_file)
+
+  assertEquals "${#short}" "${#long}" "Key length does not grow with the path"
+  assertTrue 'Filename stays under the 255-byte limit' '(( ${#long:t} < 255 ))'
 }
 
 test_cache_key_separates_unset_and_explicit_port() {

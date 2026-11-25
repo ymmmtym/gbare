@@ -121,19 +121,20 @@ _gbare_cache_enabled() {
 }
 
 # One cache entry per server and path, so switching profiles never mixes lists.
-# Every byte of the key is escaped, because replacing punctuation with "_" makes
-# /srv/team_a and /srv/team/a share an entry.
+# The key is a fixed-length FNV-1a digest: escaping the raw fields would let a
+# long GBARE_PATH exceed the 255-byte filename limit, while hashing keeps every
+# entry the same size. Hashing in zsh avoids depending on sha256sum/shasum, and
+# the fields stay unambiguous because ":" cannot appear in the user, host or a
+# numeric port, and an unset port is spelled out instead of defaulting to 22.
 _gbare_cache_key() {
+  emulate -L zsh
   local key="${GBARE_USER}@${GBARE_HOST}:${GBARE_PORT-<unset>}:${GBARE_PATH}"
-  local encoded="" char
+  local hash=-3750763034362895579  # FNV-1a 64-bit basis as a signed literal
+  local char
   for char in ${(s::)key}; do
-    if [[ $char == [A-Za-z0-9._-] ]]; then
-      encoded+=$char
-    else
-      encoded+=$(printf '%%%02X' $(( #char )))
-    fi
+    hash=$(( (hash ^ #char) * 1099511628211 ))
   done
-  print -r -- "$encoded"
+  printf '%016x' $hash
 }
 
 _gbare_cache_file() {
