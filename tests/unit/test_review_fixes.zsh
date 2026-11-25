@@ -19,6 +19,11 @@ test_remote_paths_are_shell_arguments() {
     local name='repo $(touch INJECTED); *'
     mkdir -p "$GBARE_PATH"
     _gbare_ssh() { [[ $1 == -n ]] && shift; sh -c "$1"; }
+    # Existence must be answered by the stubbed transport, not a leftover stub.
+    _gbare_check_repo_exists() {
+      _gbare_validate_repo_name "$1" || return $?
+      _gbare_ssh -n "test -d $(_gbare_quote "${GBARE_PATH}/${1}.git")"
+    }
     git() { return 0; }
     _gbare_create "$name" -y >/dev/null
     assertTrue 'Remote init used literal path' '[[ -d "$GBARE_PATH/$name.git" ]]'
@@ -54,14 +59,14 @@ test_create_local_failures() {
   _gbare_ssh() { return 0; }
   git() { return 1; }
   local output result
-  output=$(_gbare_create test -y); result=$?
+  output=$(_gbare_create test -y 2>&1); result=$?
   assertEquals 1 "$result" 'Failed init propagates'
   assertFalse 'No init success message' '[[ "$output" == *"Local repository initialized"* ]]'
   mkdir .git
-  output=$(_gbare_create test -y); result=$?
+  output=$(_gbare_create test -y 2>&1); result=$?
   assertEquals 1 "$result" 'Failed remote add propagates'
   assertContains "$output" 'Failed to add remote' 'Accurate error'
-  unfunction git _gbare_check_repo_exists
+  unfunction git
 }
 
 test_enumeration_status() {

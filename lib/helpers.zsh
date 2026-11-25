@@ -110,7 +110,156 @@ _gbare_remote_url() {
 }
 
 
+# ========================================
+# Repository list cache
+# ========================================
+
+# Caching only pays off on high-latency links, and a stale list hides remote
+# changes, so the lifetime stays short and callers can bypass it.
+_gbare_cache_enabled() {
+  [[ $GBARE_CACHE_TTL == <-> ]] && (( GBARE_CACHE_TTL > 0 ))
+}
+
+# One cache entry per server and path, so switching profiles never mixes lists.
+_gbare_cache_file() {
+  local key="${GBARE_USER}@${GBARE_HOST}:${GBARE_PORT:-22}:${GBARE_PATH}"
+  print -r -- "${GBARE_CACHE_DIR}/${${key}//[^A-Za-z0-9._-]/_}.repos"
+}
+
+# Print the cached listing when the entry is younger than GBARE_CACHE_TTL.
+# Returns 1 on a miss, which also covers a missing stat/datetime module.
+_gbare_cache_read() {
+  _gbare_cache_enabled || return 1
+
+  local file
+  file=$(_gbare_cache_file)
+  [[ -f "$file" ]] || return 1
+
+  zmodload -F zsh/stat b:zstat 2>/dev/null || return 1
+  zmodload zsh/datetime 2>/dev/null || return 1
+
+  local -a mtime
+  zstat -A mtime +mtime -- "$file" 2>/dev/null || return 1
+  (( EPOCHSECONDS - mtime[1] < GBARE_CACHE_TTL )) || return 1
+
+  cat -- "$file"
+}
+
+_gbare_cache_store() {
+  _gbare_cache_enabled || return 0
+
+  local file dir
+  file=$(_gbare_cache_file)
+  dir=${file:h}
+  mkdir -p -- "$dir" 2>/dev/null || return 0
+
+  local tmp="${file}.$$"
+  if print -r -- "$1" >| "$tmp" 2>/dev/null; then
+    mv -f -- "$tmp" "$file" 2>/dev/null || rm -f -- "$tmp"
+  fi
+  return 0
+}
+
+# Drop the cached listing; call after any change to the remote repository set.
+_gbare_cache_invalidate() {
+  rm -f -- "$(_gbare_cache_file)" 2>/dev/null
+  return 0
+}
+
 # Emit repository paths, succeeding with no output for an empty directory.
+# Usage: _gbare_repository_paths [--refresh]
+# Args:
+#   --refresh - Ignore the cached listing and re-enumerate the server
 _gbare_repository_paths() {
-  _gbare_ssh "test -d ${(qq)GBARE_PATH} && for repo in ${(qq)GBARE_PATH}/*.git; do [ -d \"\$repo\" ] || continue; printf '%s\\n' \"\$repo\"; done"
+  local use_cache=true
+  if [[ $1 == --refresh ]]; then
+    use_cache=false
+    shift
+  fi
+
+  local listing
+  if [[ $use_cache == true ]] && listing=$(_gbare_cache_read); then
+    [[ -z "$listing" ]] || print -r -- "$listing"
+    return 0
+  fi
+
+  # find keeps the result independent of the remote shell's unset-glob
+  # behaviour, which differs between sh and zsh remotes. A missing base path
+  # still fails, so a mistyped GBARE_PATH is reported instead of looking empty.
+  if ! listing=$(_gbare_ssh "test -d ${(qq)GBARE_PATH} && find ${(qq)GBARE_PATH} -mindepth 1 -maxdepth 1 -type d -name '*.git' | LC_ALL=C sort"); then
+    return 1
+  fi
+
+  [[ $use_cache == false ]] || _gbare_cache_store "$listing"
+
+  [[ -z "$listing" ]] || print -r -- "$listing"
+  return 0
+}
+
+# ========================================
+# Bounded parallel execution
+# ========================================
+
+# Run one command per item, at most GBARE_JOBS at a time.
+# Usage: _gbare_parallel <runner> <item>...
+# Args:
+#   runner - Function called as "<runner> <item>"; it prints its own report
+#   item   - One positional argument per invocation
+# Returns:
+#   0 when every invocation succeeded, 1 otherwise
+# Note:
+#   Concurrent runs buffer their output and replay it in item order, so reports
+#   stay readable while the work itself overlaps.
+_gbare_parallel() {
+  local runner=$1
+  shift
+  local -a items=("$@")
+  (( ${#items[@]} )) || return 0
+
+  local jobs=${GBARE_JOBS:-1}
+  [[ $jobs == <-> ]] || jobs=1
+  (( jobs >= 1 )) || jobs=1
+
+  local rc=0 item
+  if (( jobs == 1 || ${#items[@]} == 1 )); then
+    for item in "${items[@]}"; do
+      "$runner" "$item" || rc=1
+    done
+    return $rc
+  fi
+
+  local work_dir
+  work_dir=$(mktemp -d "${TMPDIR:-/tmp}/gbare-parallel.XXXXXX") || return 1
+
+  local -a pids=()
+  local index=0 code
+  for item in "${items[@]}"; do
+    index=$((index + 1))
+    if (( ${#pids[@]} >= jobs )); then
+      wait "${pids[1]}" 2>/dev/null
+      pids=("${pids[@]:1}")
+    fi
+    (
+      "$runner" "$item" >| "${work_dir}/${index}.out" 2>&1
+      print -r -- $? >| "${work_dir}/${index}.status"
+    ) &
+    pids+=($!)
+  done
+
+  local pid
+  for pid in "${pids[@]}"; do
+    wait "$pid" 2>/dev/null
+  done
+
+  index=0
+  for item in "${items[@]}"; do
+    index=$((index + 1))
+    [[ -f "${work_dir}/${index}.out" ]] && cat -- "${work_dir}/${index}.out"
+    code=''
+    [[ -f "${work_dir}/${index}.status" ]] && code=$(<"${work_dir}/${index}.status")
+    [[ "$code" == 0 ]] || rc=1
+  done
+
+  rm -rf -- "$work_dir"
+  return $rc
 }

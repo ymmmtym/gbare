@@ -43,6 +43,18 @@ GBARE_CONFIG_FILE="${GBARE_CONFIG_FILE:-${HOME}/.config/gbare/config}"
 # SSH接続タイムアウト（秒）
 : ${GBARE_SSH_TIMEOUT:="10"}
 
+# GBARE_CACHE_TTL - Repository list cache lifetime in seconds (0 disables caching)
+# Default: "0" (enabled by setting e.g. 60; see _gbare_cache_read)
+: ${GBARE_CACHE_TTL:="0"}
+
+# GBARE_CACHE_DIR - Directory holding cached repository listings
+# Default: "${XDG_CACHE_HOME:-$HOME/.cache}/gbare"
+: ${GBARE_CACHE_DIR:="${XDG_CACHE_HOME:-${HOME}/.cache}/gbare"}
+
+# GBARE_JOBS - Maximum concurrent workers for multi-repository commands
+# Default: "1" (sequential; raise it to run operations in parallel)
+: ${GBARE_JOBS:="1"}
+
 # Refresh color definitions after configuration changes.
 _gbare_init_colors() {
   if [[ "$GBARE_COLOR" == "true" ]]; then

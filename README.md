@@ -76,6 +76,8 @@ export GBARE_USER="your-username"      # SSH ユーザー名
 export GBARE_HOST="your-server"        # サーバーのホスト名または IP
 export GBARE_PORT="22"                 # SSH ポート（オプション、デフォルトは22）
 export GBARE_PATH="/var/git"           # リポジトリのパス
+export GBARE_CACHE_TTL="60"            # 一覧キャッシュの秒数（0 で無効、デフォルト 0）
+export GBARE_JOBS="4"                  # 一括操作の並列数（デフォルト 1）
 ```
 
 **デフォルト設定:**
@@ -83,6 +85,9 @@ export GBARE_PATH="/var/git"           # リポジトリのパス
 - `GBARE_HOST`: `nas`
 - `GBARE_PORT`: (空) - SSH のデフォルト（22）を使用
 - `GBARE_PATH`: `/volume1/homes/${GBARE_USER}/git`
+- `GBARE_CACHE_TTL`: `0` - キャッシュ無効（例: `60` で 60 秒間再利用）
+- `GBARE_CACHE_DIR`: `${XDG_CACHE_HOME:-$HOME/.cache}/gbare`
+- `GBARE_JOBS`: `1` - 逐次実行（例: `4` で 4 並列）
 
 現在の設定を確認:
 ```bash
@@ -178,18 +183,50 @@ gbare clone myproject ~/work/myproject
 | コマンド | 短縮形 | 説明 |
 |---------|--------|------|
 | `gbare create [name] [-y]` | `gbare c` | ベアリポジトリを作成 |
-| `gbare list` | `gbare ls`, `gbare l` | リポジトリ一覧を表示 |
+| `gbare list [--refresh]` | `gbare ls`, `gbare l` | リポジトリ一覧を表示 |
 | `gbare clone <name> [dir]` | `gbare cl` | リポジトリをクローン |
-| `gbare delete <name>` | `gbare rm`, `gbare d` | リポジトリを削除 |
-| `gbare info <name>` | `gbare i` | リポジトリ情報を表示 |
-| `gbare url <name>` | `gbare u` | SSH URL を取得 |
+| `gbare clone -j <n> <name>...` | `gbare cl` | 複数リポジトリを並列クローン |
+| `gbare delete <name>...` | `gbare rm`, `gbare d` | リポジトリを削除 |
+| `gbare info <name>...` | `gbare i` | リポジトリ情報を表示 |
+| `gbare url <name>...` | `gbare u` | SSH URL を取得 |
 | `gbare remote [name] [remote] [-y]` | `gbare r` | リモートを追加 |
+| `gbare backup [dir] [-j <n>]` | `gbare b` | 全リポジトリをバックアップ |
 | `gbare config` | `gbare cfg` | 現在の設定を表示 |
 | `gbare help` | `gbare h` | ヘルプを表示 |
 
 ### オプション
 
 - `-y`, `--yes`: 確認プロンプトをスキップ（`create` と `remote` で使用可能）
+- `-j`, `--jobs <n>`: 同時実行数（`clone`、`delete`、`info`、`backup` で使用可能）
+- `--refresh`: キャッシュを無視して再取得（`list` で使用可能）
+
+### キャッシュ
+
+`GBARE_CACHE_TTL` を設定すると、リポジトリ一覧を `GBARE_CACHE_DIR` に
+キャッシュします。SSH の往復が減るため、`gbare list` や補完が速くなります。
+既定は `0`（無効）です。`create` と `delete` の成功時には自動で無効化され、
+`gbare list --refresh` で明示的に取り直せます。
+
+```bash
+export GBARE_CACHE_TTL="60"
+
+gbare list              # 初回はサーバーへ問い合わせ、以降は 60 秒キャッシュ
+gbare list --refresh    # キャッシュを無視して再取得
+```
+
+### 並列処理
+
+`clone`、`delete`、`info`、`backup` は複数のリポジトリを受け取れます。
+`GBARE_JOBS` か `-j` で同時実行数を指定すると並列に処理します。
+
+```bash
+gbare clone -j 4 one two three   # 4 並列でクローン
+gbare info one two three         # 3 件を表示
+gbare backup -j 4                # バックアップを 4 並列で実行
+```
+
+出力はリポジトリの指定順に並ぶため、並列実行でもログは読みやすいままです。
+`delete` は複数指定時に一度だけ確認を求めます。
 
 ## 例
 
