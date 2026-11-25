@@ -173,6 +173,40 @@ test_cache_store_does_not_expose_temp_file() {
   assertEquals "600" "$(stat -c '%a' -- "$file")" "Entry is private even under umask 022"
 }
 
+test_cache_store_does_not_follow_planted_symlink() {
+  GBARE_CACHE_TTL=60
+  local file victim
+  file=$(_gbare_cache_file)
+  mkdir -p "${file:h}"
+  victim="${GBARE_CACHE_DIR}/victim"
+  print -r -- "ORIGINAL" >| "$victim"
+
+  # A predictable temp path lets another account plant a symlink there.
+  ln -sf -- "$victim" "${file}.$$"
+  _gbare_cache_store "private repo names"
+
+  assertEquals "ORIGINAL" "$(cat -- "$victim")" "Planted symlink is not written through"
+  assertEquals "private repo names" "$(cat -- "$file")" "Listing is still cached"
+}
+
+test_cache_invalidate_creates_directory_for_generation() {
+  GBARE_CACHE_TTL=60
+  local file
+  file=$(_gbare_cache_file)
+  assertFalse "Cache directory starts absent" "[[ -d ${(q)GBARE_CACHE_DIR} ]]"
+
+  _gbare_cache_invalidate
+  assertTrue "Generation marker is recorded" "[[ -f ${(q)file}.gen ]]"
+}
+
+test_cache_invalidate_is_noop_when_disabled() {
+  GBARE_CACHE_TTL=0
+  local file
+  file=$(_gbare_cache_file)
+  _gbare_cache_invalidate
+  assertFalse "No directory is created when caching is off" "[[ -d ${(q)GBARE_CACHE_DIR} ]]"
+}
+
 test_cache_store_tightens_existing_directory() {
   GBARE_CACHE_TTL=60
   local file

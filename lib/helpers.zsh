@@ -175,11 +175,16 @@ _gbare_cache_store() {
     mkdir -p -m 700 -- "$dir" 2>/dev/null || return 0
   fi
 
-  local tmp="${file}.$$"
-  # Write under umask 077 rather than chmod-ing afterwards, so the listing is not
-  # readable by another account even for the instant before the rename.
+  # mktemp creates the file with O_EXCL, so a symlink planted at the predictable
+  # "${file}.$$" path cannot redirect this write onto a file we can modify.
+  local tmp
+  tmp=$(mktemp -- "${file}.XXXXXX" 2>/dev/null) || return 0
+  # umask 077 keeps the entry private from the instant it exists, instead of
+  # chmod-ing it after a window where it is readable.
   if (umask 077 && print -r -- "$1" >| "$tmp") 2>/dev/null; then
     mv -f -- "$tmp" "$file" 2>/dev/null || rm -f -- "$tmp"
+  else
+    rm -f -- "$tmp"
   fi
   return 0
 }
@@ -188,8 +193,13 @@ _gbare_cache_store() {
 # Bumping the stored generation also discards listings that were already in
 # flight, so a slow fetch cannot republish what this call just invalidated.
 _gbare_cache_invalidate() {
+  _gbare_cache_enabled || return 0
+
   local file
   file=$(_gbare_cache_file)
+  # Without the directory the marker would not be recorded, and a concurrent
+  # fetch would publish a listing that predates this invalidation.
+  mkdir -p -m 700 -- "${file:h}" 2>/dev/null
   zmodload zsh/datetime 2>/dev/null
   print -r -- "${EPOCHSECONDS}.${RANDOM}" >| "${file}.gen" 2>/dev/null
   rm -f -- "$file" 2>/dev/null
