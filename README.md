@@ -207,6 +207,10 @@ gbare clone myproject ~/work/myproject
 既定は `0`（無効）です。`create` と `delete` の成功時には自動で無効化され、
 `gbare list --refresh` で明示的に取り直せます。
 
+キャッシュにはリポジトリ名が入るため、ディレクトリとファイルは所有者のみ
+読み書き可能（`700` / `600`）で作成します。`GBARE_CACHE_DIR` を自分以外が
+書き込める場所に向けた場合、そのキャッシュは読み書きに使われません。
+
 ```bash
 export GBARE_CACHE_TTL="60"
 

@@ -238,6 +238,38 @@ test_mutation_during_fetch_prevents_publish() {
     "[[ -f ${(q)file} ]]"
 }
 
+test_cache_lookup_with_ttl_zero_creates_no_cache() {
+  GBARE_CACHE_TTL=0
+  _gbare_repository_paths >/dev/null
+  assertFalse "A disabled lookup does not create the cache directory" \
+    "[[ -d ${(q)GBARE_CACHE_DIR} ]]"
+}
+
+test_cache_invalidate_does_not_follow_planted_marker_symlink() {
+  GBARE_CACHE_TTL=60
+  local file victim
+  file=$(_gbare_cache_file)
+  mkdir -p "${file:h}"
+  chmod 700 "${file:h}"
+  victim="${GBARE_CACHE_DIR}/victim"
+  print -r -- "ORIGINAL" >| "$victim"
+  ln -sf -- "$victim" "${file}.gen"
+
+  _gbare_cache_invalidate
+  assertEquals "ORIGINAL" "$(cat -- "$victim")" "Planted marker symlink is not written through"
+  assertFalse "The marker itself is not a symlink" "[[ -L ${(q)file}.gen ]]"
+}
+
+test_cache_ignores_untrusted_directory() {
+  GBARE_CACHE_TTL=60
+  mkdir -p "$GBARE_CACHE_DIR"
+  chmod 777 "$GBARE_CACHE_DIR"
+
+  _gbare_cache_store "private repo names"
+  assertEquals "" "$(ls -A "$GBARE_CACHE_DIR")" "Nothing is written to a world-writable cache"
+  assertFalse "An untrusted cache is not read" "_gbare_cache_read"
+}
+
 test_cache_store_tightens_existing_directory() {
   GBARE_CACHE_TTL=60
   local file

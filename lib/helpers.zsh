@@ -148,7 +148,8 @@ _gbare_cache_read() {
 
   local file
   file=$(_gbare_cache_file)
-  [[ -f "$file" ]] || return 1
+  _gbare_cache_dir_is_trusted || return 1
+  [[ -f "$file" && ! -L "$file" ]] || return 1
 
   zmodload -F zsh/stat b:zstat 2>/dev/null || return 1
   zmodload zsh/datetime 2>/dev/null || return 1
@@ -160,6 +161,21 @@ _gbare_cache_read() {
   cat -- "$file"
 }
 
+# Write $2 to path $1 atomically and owner-only.
+# mktemp creates the temporary file with O_EXCL, so a link planted at a
+# predictable path cannot redirect this write; umask 077 keeps the entry private
+# from the instant it exists rather than chmod-ing it after a readable window.
+_gbare_cache_write() {
+  local target=$1 data=$2 tmp
+  tmp=$(mktemp -- "${target}.XXXXXX" 2>/dev/null) || return 1
+  if (umask 077 && print -r -- "$data" >| "$tmp") 2>/dev/null; then
+    mv -f -- "$tmp" "$target" 2>/dev/null || rm -f -- "$tmp"
+  else
+    rm -f -- "$tmp"
+  fi
+  return 0
+}
+
 # The listing holds private repository names, so the directory and the entry are
 # created owner-only rather than inheriting a group/world-readable umask.
 _gbare_cache_store() {
@@ -168,25 +184,25 @@ _gbare_cache_store() {
   local file dir
   file=$(_gbare_cache_file)
   dir=${file:h}
-  # An existing directory is tightened too, but only when we own it.
-  if [[ -d "$dir" ]]; then
-    [[ -O "$dir" ]] && chmod 700 -- "$dir" 2>/dev/null
-  else
-    mkdir -p -m 700 -- "$dir" 2>/dev/null || return 0
-  fi
+  mkdir -p -m 700 -- "$dir" 2>/dev/null
+  _gbare_cache_dir_is_trusted || return 0
+  chmod 700 -- "$dir" 2>/dev/null
 
-  # mktemp creates the file with O_EXCL, so a symlink planted at the predictable
-  # "${file}.$$" path cannot redirect this write onto a file we can modify.
-  local tmp
-  tmp=$(mktemp -- "${file}.XXXXXX" 2>/dev/null) || return 0
-  # umask 077 keeps the entry private from the instant it exists, instead of
-  # chmod-ing it after a window where it is readable.
-  if (umask 077 && print -r -- "$1" >| "$tmp") 2>/dev/null; then
-    mv -f -- "$tmp" "$file" 2>/dev/null || rm -f -- "$tmp"
-  else
-    rm -f -- "$tmp"
-  fi
+  _gbare_cache_write "$file" "$1"
   return 0
+}
+
+# A cache directory another account can write to cannot hold trusted entries:
+# anything written there may be replaced by a symlink, and following one would
+# let that account redirect our writes. Refuse to use such a directory.
+_gbare_cache_dir_is_trusted() {
+  local dir=${1:-${GBARE_CACHE_DIR}}
+  [[ -d "$dir" ]] || return 1
+  [[ -O "$dir" ]] || return 1
+  local -a perms
+  zmodload -F zsh/stat b:zstat 2>/dev/null || return 1
+  zstat -A perms +mode -- "$dir" 2>/dev/null || return 1
+  (( (perms[1] & 8#022) == 0 ))
 }
 
 # Drop the cached listing; call after any change to the remote repository set.
@@ -198,10 +214,10 @@ _gbare_cache_invalidate() {
   # A shell that mutates without caching may still share GBARE_CACHE_DIR with one
   # that caches, so invalidate even when caching is disabled here. Nothing to
   # discard means nothing to do, and no directory is created for a cache miss.
-  [[ -d "${file:h}" ]] || return 0
+  _gbare_cache_dir_is_trusted || return 0
 
   zmodload zsh/datetime 2>/dev/null
-  print -r -- "${EPOCHSECONDS}.${RANDOM}" >| "${file}.gen" 2>/dev/null
+  _gbare_cache_write "${file}.gen" "${EPOCHSECONDS}.${RANDOM}"
   rm -f -- "$file" 2>/dev/null
   return 0
 }
@@ -232,8 +248,8 @@ _gbare_repository_paths() {
   # happens mid-fetch changes it and this fetch declines to publish. The marker
   # has to exist year-round: a mutating shell may run with caching disabled and
   # only bumps an existing marker rather than creating the directory itself.
-  if [[ $use_cache == true ]]; then
-    mkdir -p -m 700 -- "$dir" 2>/dev/null
+  if [[ $use_cache == true ]] && _gbare_cache_enabled; then
+    mkdir -p -m 700 -- "$dir" 2>/dev/null || return 1
     [[ -f "${file}.gen" ]] || _gbare_cache_invalidate
   fi
   generation=$(cat -- "${file}.gen" 2>/dev/null)
