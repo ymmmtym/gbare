@@ -270,6 +270,22 @@ test_cache_ignores_untrusted_directory() {
   assertFalse "An untrusted cache is not read" "_gbare_cache_read"
 }
 
+test_cache_initialization_failure_still_lists() {
+  GBARE_CACHE_TTL=60
+  # A cache parent that cannot be written to must not fail the listing.
+  local parent="${_TEST_TMPDIR}/readonly"
+  mkdir -p "$parent"
+  chmod 500 "$parent"
+  export GBARE_CACHE_DIR="${parent}/cache"
+
+  local listing
+  listing=$(_gbare_repository_paths)
+  assertEquals 0 $? "Listing succeeds with an unwritable cache parent"
+  assertContains "$listing" "one.git" "Repositories are still enumerated"
+  assertFalse "No cache is created" "[[ -d ${(q)GBARE_CACHE_DIR} ]]"
+  chmod 700 "$parent"
+}
+
 test_cache_store_tightens_existing_directory() {
   GBARE_CACHE_TTL=60
   local file

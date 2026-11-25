@@ -239,20 +239,22 @@ _gbare_repository_paths() {
     return 0
   fi
 
-  local key file generation dir
+  local key file generation
+  local track_generation=false
   key=$(_gbare_cache_key)
   file="${GBARE_CACHE_DIR}/${key}.repos"
-  dir=${file:h}
 
   # Establish the generation baseline before enumerating, so a mutation that
   # happens mid-fetch changes it and this fetch declines to publish. The marker
   # has to exist year-round: a mutating shell may run with caching disabled and
   # only bumps an existing marker rather than creating the directory itself.
-  if [[ $use_cache == true ]] && _gbare_cache_enabled; then
-    mkdir -p -m 700 -- "$dir" 2>/dev/null || return 1
+  # Storage failures only cost caching; the listing itself still has to work.
+  if [[ $use_cache == true ]] && _gbare_cache_enabled &&
+     mkdir -p -m 700 -- "${file:h}" 2>/dev/null; then
     [[ -f "${file}.gen" ]] || _gbare_cache_invalidate
+    generation=$(cat -- "${file}.gen" 2>/dev/null)
+    track_generation=true
   fi
-  generation=$(cat -- "${file}.gen" 2>/dev/null)
 
   # -H follows the configured root when it is itself a symlink, while children
   # stay unfollowed. find is used instead of a glob because the remote shell may
@@ -265,7 +267,7 @@ _gbare_repository_paths() {
   listing=$(print -r -- "$listing" | LC_ALL=C sort)
 
   # Publish only if no mutation invalidated this key while the fetch ran.
-  if [[ $use_cache == true ]] &&
+  if [[ $track_generation == true ]] &&
      [[ "$(cat -- "${file}.gen" 2>/dev/null)" == "$generation" ]]; then
     _gbare_cache_store "$listing"
   fi
