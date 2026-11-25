@@ -17,22 +17,34 @@ If \fIname\fR is omitted, uses the current directory name.
 The \fB-y\fR or \fB--yes\fR flag skips the confirmation prompt.
 Also initializes a local git repository and adds the remote if not already initialized.
 .TP
-.BR list ", " ls ", " l
+.BR list ", " ls ", " l " [" --refresh "]
 List all bare repositories on the remote server.
+The \fB--refresh\fR flag ignores the cached listing and re-enumerates the server.
 .TP
-.BR clone ", " cl " <" name "> [" directory "]
+.BR clone ", " cl " <" name "> [" directory "]"
 Clone a repository from the remote server.
 If \fIdirectory\fR is specified, clones into that directory.
 .TP
-.BR delete ", " rm ", " d " <" name ">
-Delete a repository from the remote server.
-Requires typing the repository name for confirmation.
+.BR clone ", " cl " -j "|" --jobs " " n " <" name ">..."
+Clone several repositories at once, \fIn\fR workers at a time.
+Every positional argument is then a repository name.
+The jobs flag is required: without it, two arguments mean the single
+repository form "clone <name> <directory>".
 .TP
-.BR info ", " i " <" name ">
+.BR delete ", " rm ", " d " <" name ">...
+Delete one or more repositories from the remote server.
+Requires typing the repository name for confirmation; a batch prompts once and
+requires the literal string "yes".
+.TP
+.BR info ", " i " <" name ">...
 Show repository information including server, SSH URL, branches, and tags.
 .TP
-.BR url ", " u " <" name ">
-Print the SSH URL for a repository.
+.BR url ", " u " <" name ">...
+Print the SSH URL for each repository, one per line.
+.TP
+.BR backup ", " b " [" directory "] [" -j "|" --jobs " " n "]"
+Back up all remote repositories with mirrored clones into a timestamped
+subdirectory. Default directory: \fB~/gbare_backups\fR
 .TP
 .BR remote ", " r " [" name "] [" remote "] [" -y | --yes "]
 Add a remote to an existing local git repository.
@@ -49,6 +61,13 @@ Show help message with usage information.
 .TP
 .BR -y ", " --yes
 Skip confirmation prompts. Available for \fBcreate\fR and \fBremote\fR commands.
+.TP
+.BR -j ", " --jobs " " n
+Number of concurrent workers for multi-repository commands.
+Available for \fBclone\fR, \fBdelete\fR, \fBinfo\fR, and \fBbackup\fR.
+.TP
+.BR --refresh
+Ignore the cached repository listing. Available for \fBlist\fR.
 .SH ENVIRONMENT VARIABLES
 .TP
 .B GBARE_USER
@@ -63,6 +82,18 @@ SSH port number. If not set or empty, uses SSH default port 22.
 .B GBARE_PATH
 Base path for bare repositories on the remote server.
 Default: \fB/volume1/homes/${GBARE_USER}/git\fR
+.TP
+.B GBARE_CACHE_TTL
+Lifetime of the cached repository listing in seconds.
+A value of 0 (the default) disables caching.
+.TP
+.B GBARE_CACHE_DIR
+Directory holding cached repository listings.
+Default: \fB${XDG_CACHE_HOME:-$HOME/.cache}/gbare\fR
+.TP
+.B GBARE_JOBS
+Number of concurrent workers used by multi-repository commands.
+Default: \fB1\fR (sequential)
 .SH EXAMPLES
 .TP
 Create a repository with the current directory name:

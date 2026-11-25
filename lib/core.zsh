@@ -40,6 +40,8 @@ _gbare_create() {
     echo "No repository name provided, using current directory name: ${repo_name}"
   fi
 
+  _gbare_validate_repo_name "$repo_name" || return 1
+
   # Confirmation
   if [[ "$auto_yes" == false ]]; then
     echo ""
@@ -87,6 +89,7 @@ _gbare_create() {
 
   if [[ $exit_code -eq 0 ]]; then
     _gbare_ok "Bare repository created on ${GBARE_HOST}"
+    _gbare_cache_invalidate
 
     # Initialize local repo if not already a git repo
     if [[ ! -d .git ]]; then
@@ -126,7 +129,9 @@ _gbare_create() {
 }
 
 # List all bare repositories on the remote server
-# Usage: _gbare_list
+# Usage: _gbare_list [--refresh]
+# Args:
+#   --refresh - Skip the cached listing and query the server
 # Returns:
 #   0 on success, 1 on failure
 # Output:
@@ -137,16 +142,38 @@ _gbare_create() {
 #   # =>   • project1
 #   # =>   • project2
 _gbare_list() {
-  # SSH接続チェック
-  if ! _gbare_check_ssh; then
-    return 1
-  fi
+  local refresh=false
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --refresh)
+        refresh=true
+        shift
+        ;;
+      *)
+        shift
+        ;;
+    esac
+  done
 
   echo "Bare repositories on ${GBARE_HOST}:"
   echo ""
 
+  # A fresh cache entry answers without SSH, so only the server-contacting paths
+  # probe the connection; otherwise an unreachable host would fail a cached list.
   local output
-  output=$(_gbare_repository_paths 2>&1)
+  if [[ $refresh == true ]]; then
+    if ! _gbare_check_ssh; then
+      return 1
+    fi
+    output=$(_gbare_repository_paths --refresh 2>&1)
+  else
+    if ! _gbare_cache_read >/dev/null; then
+      if ! _gbare_check_ssh; then
+        return 1
+      fi
+    fi
+    output=$(_gbare_repository_paths 2>&1)
+  fi
   local exit_code=$?
 
   if [[ $exit_code -ne 0 ]]; then
@@ -165,31 +192,40 @@ _gbare_list() {
   done
 }
 
-# Clone a repository from the remote server
-# Usage: _gbare_clone <repo_name> [target_dir]
-# Args:
-#   repo_name  - Name of the repository to clone (required)
-#   target_dir - Directory to clone into (optional, defaults to repo name)
+# Record the worker count requested by "-j" / "--jobs".
+# Usage: _gbare_set_jobs <value>
+# Side effects:
+#   Sets _GBARE_JOBS_OVERRIDE, clamped to at least 1
 # Returns:
-#   0 on success, 1 if repo_name is not provided
-# Example:
-#   _gbare_clone myproject                  # Clones to ./myproject/
-#   _gbare_clone myproject ~/work/project   # Clones to specified directory
-_gbare_clone() {
+#   0 on success, 1 when the value is not a positive integer
+_gbare_set_jobs() {
+  if [[ "$1" != <-> ]]; then
+    _gbare_error "--jobs requires a positive number"
+    return 1
+  fi
+  _GBARE_JOBS_OVERRIDE=$1
+  (( _GBARE_JOBS_OVERRIDE >= 1 )) || _GBARE_JOBS_OVERRIDE=1
+  return 0
+}
+
+# Run a multi-repository command with the requested worker count.
+_gbare_run_parallel() {
+  local saved_jobs=$GBARE_JOBS
+  [[ -z "$_GBARE_JOBS_OVERRIDE" ]] || GBARE_JOBS=$_GBARE_JOBS_OVERRIDE
+  _gbare_parallel "$@"
+  local rc=$?
+  GBARE_JOBS=$saved_jobs
+  _GBARE_JOBS_OVERRIDE=""
+  return $rc
+}
+
+# Clone one repository (worker for _gbare_clone).
+# Usage: _gbare_clone_one <repo_name> [target_dir]
+_gbare_clone_one() {
   local repo_name=$1
   local target_dir=$2
 
-  if [[ -z "$repo_name" ]]; then
-    echo "Usage: gbare clone <repository-name> [directory]"
-    return 1
-  fi
-
   _gbare_validate_repo_name "$repo_name" || return 1
-
-  # SSH接続チェック
-  if ! _gbare_check_ssh; then
-    return 1
-  fi
 
   # リポジトリ存在チェック
   local repo_status
@@ -203,7 +239,7 @@ _gbare_clone() {
     _gbare_error "Repository '${repo_name}.git' does not exist on ${GBARE_HOST}"
     echo ""
     echo "Available repositories:"
-    _gbare_ssh "ls -1d $(_gbare_quote "$GBARE_PATH")/*.git 2>/dev/null" 2>/dev/null | sed 's/.*\///' | sed 's/\.git$//' | while read repo; do
+    _gbare_repository_paths 2>/dev/null | sed 's/.*\///' | sed 's/\.git$//' | while read repo; do
       echo "  • $repo"
     done
     return 1
@@ -223,41 +259,100 @@ _gbare_clone() {
   local exit_code=$?
 
   if [[ $exit_code -ne 0 ]]; then
-    _gbare_error "Failed to clone repository"
+    _gbare_error "Failed to clone repository '${repo_name}'"
     echo "  Details: ${output}"
     return 1
   fi
 
-  _gbare_ok "Repository cloned successfully"
+  _gbare_ok "Repository cloned successfully: ${repo_name}"
 }
 
-# Delete a repository from the remote server
-# Usage: _gbare_delete <repo_name>
+# Clone one or more repositories from the remote server
+# Usage: _gbare_clone <repo_name> [target_dir]
+#        _gbare_clone [-j|--jobs N] <repo_name>...
 # Args:
-#   repo_name - Name of the repository to delete (required)
+#   repo_name    - Name of the repository to clone (required)
+#   target_dir   - Directory to clone into (optional, single-repository form only)
+#   -j, --jobs N - Run N clones at a time; every positional is then a repository
 # Returns:
-#   0 on success, 1 if repo_name is not provided or deletion fails
-# Note:
-#   Requires typing the repository name for confirmation to prevent accidental deletion
+#   0 on success, 1 if no repository is given or any clone fails
 # Example:
-#   _gbare_delete myproject
-#   # => WARNING: This will permanently delete myproject.git from nas
-#   # => Type repository name to confirm: myproject
-#   # => Repository deleted: myproject.git
-_gbare_delete() {
-  local repo_name=$1
+#   _gbare_clone myproject                  # Clones to ./myproject/
+#   _gbare_clone myproject ~/work/project   # Clones to specified directory
+#   _gbare_clone -j 4 one two three         # Clones three repositories at once
+_gbare_clone() {
+  _GBARE_JOBS_OVERRIDE=""
+  local -a repo_names=()
+  local target_dir=""
 
-  if [[ -z "$repo_name" ]]; then
-    echo "Usage: gbare delete <repository-name>"
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      -j|--jobs)
+        _gbare_set_jobs "$2" || return 1
+        shift 2
+        ;;
+      --jobs=*)
+        _gbare_set_jobs "${1#--jobs=}" || return 1
+        shift
+        ;;
+      -j<->)
+        _gbare_set_jobs "${1#-j}" || return 1
+        shift
+        ;;
+      -y|--yes)
+        shift
+        ;;
+      -*)
+        echo "Unknown option: $1"
+        echo "Usage: gbare clone <repository-name> [directory]"
+        echo "       gbare clone -j <count> <repository-name>..."
+        return 1
+        ;;
+      *)
+        repo_names+=("$1")
+        shift
+        ;;
+    esac
+  done
+
+  if [[ ${#repo_names[@]} -eq 0 ]]; then
+    echo "Usage: gbare clone <repository-name> [directory]"
+    echo "       gbare clone -j <count> <repository-name>..."
     return 1
   fi
 
-  _gbare_validate_repo_name "$repo_name" || return 1
+  # The single-repository form keeps its optional directory argument.
+  if [[ -z "$_GBARE_JOBS_OVERRIDE" && ${#repo_names[@]} -eq 2 ]]; then
+    target_dir=${repo_names[2]}
+    repo_names=("${repo_names[1]}")
+  fi
+
+  _gbare_validate_repo_name "${repo_names[1]}" || return 1
 
   # SSH接続チェック
   if ! _gbare_check_ssh; then
     return 1
   fi
+
+  if [[ ${#repo_names[@]} -eq 1 && -z "$_GBARE_JOBS_OVERRIDE" ]]; then
+    _gbare_clone_one "${repo_names[1]}" "$target_dir"
+    return $?
+  fi
+
+  _gbare_run_parallel _gbare_clone_one "${repo_names[@]}"
+}
+
+# Delete one repository (worker for _gbare_delete).
+# Usage: _gbare_delete_one <repo_name> [confirmation]
+# Args:
+#   repo_name    - Name of the repository to delete
+#   confirmation - Pre-answered confirmation; omitted means prompt after the
+#                  existence check, as the interactive single-repository form does
+_gbare_delete_one() {
+  local repo_name=$1
+  local confirmation=$2
+
+  _gbare_validate_repo_name "$repo_name" || return 1
 
   # リポジトリ存在チェック
   local repo_status
@@ -272,57 +367,125 @@ _gbare_delete() {
     return 1
   fi
 
-  echo "⚠️  WARNING: This will permanently delete ${repo_name}.git from ${GBARE_HOST}"
-  echo "  Path: ${GBARE_PATH}/${repo_name}.git"
-  echo ""
-  echo -n "Type repository name to confirm: "
-  read confirmation
-
-  if [[ "$confirmation" == "$repo_name" ]]; then
-    local output
-    output=$(_gbare_ssh "rm -rf -- $(_gbare_quote "${GBARE_PATH}/${repo_name}.git")" 2>&1)
-    local exit_code=$?
-
-    if [[ $exit_code -eq 0 ]]; then
-      _gbare_ok "Repository deleted: ${repo_name}.git"
-    else
-      _gbare_error "Failed to delete repository"
-      echo "  Details: ${output}"
-      return 1
-    fi
-  else
-    echo "Cancelled (input did not match)"
+  if [[ -z "$confirmation" ]]; then
+    echo "⚠️  WARNING: This will permanently delete ${repo_name}.git from ${GBARE_HOST}"
+    echo "  Path: ${GBARE_PATH}/${repo_name}.git"
+    echo ""
+    echo -n "Type repository name to confirm: "
+    read confirmation
   fi
-}
 
-# Show information about a repository on the remote server
-# Usage: _gbare_info <repo_name>
-# Args:
-#   repo_name - Name of the repository (required)
-# Returns:
-#   0 on success, 1 if repo_name is not provided
-# Output:
-#   Prints repository name, server, port (if configured), SSH URL, and branches/tags
-# Example:
-#   _gbare_info myproject
-#   # => Repository: myproject.git
-#   # => Server: nas
-#   # => SSH URL: ssh://user@nas/path/myproject.git
-#   # => Branches and tags:
-_gbare_info() {
-  local repo_name=$1
-
-  if [[ -z "$repo_name" ]]; then
-    echo "Usage: gbare info <repository-name>"
+  if [[ "$confirmation" != "$repo_name" ]]; then
+    echo "Cancelled (input did not match)"
     return 1
   fi
 
-  _gbare_validate_repo_name "$repo_name" || return 1
+  local output
+  output=$(_gbare_ssh "rm -rf -- $(_gbare_quote "${GBARE_PATH}/${repo_name}.git")" 2>&1)
+  local exit_code=$?
+
+  if [[ $exit_code -ne 0 ]]; then
+    _gbare_error "Failed to delete repository '${repo_name}'"
+    echo "  Details: ${output}"
+    return 1
+  fi
+
+  _gbare_cache_invalidate
+  _gbare_ok "Repository deleted: ${repo_name}.git"
+}
+
+# Delete one or more repositories from the remote server
+# Usage: _gbare_delete <repo_name>
+#        _gbare_delete [-j|--jobs N] <repo_name>...
+# Args:
+#   repo_name    - Name of the repository to delete (required)
+#   -j, --jobs N - Delete N repositories at a time
+# Returns:
+#   0 on success, 1 if no repository is given or any deletion fails
+# Note:
+#   Requires typing the repository name to confirm. Batch deletion prompts once
+#   and requires the literal string "yes" instead, because typing every name
+#   would defeat the point of running the batch.
+# Example:
+#   _gbare_delete myproject
+#   # => WARNING: This will permanently delete myproject.git from nas
+#   # => Type repository name to confirm: myproject
+#   # => Repository deleted: myproject.git
+#   _gbare_delete -j 4 one two three
+#   # => Type 'yes' to confirm: yes
+_gbare_delete() {
+  _GBARE_JOBS_OVERRIDE=""
+  local -a repo_names=()
+
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      -j|--jobs)
+        _gbare_set_jobs "$2" || return 1
+        shift 2
+        ;;
+      --jobs=*)
+        _gbare_set_jobs "${1#--jobs=}" || return 1
+        shift
+        ;;
+      -j<->)
+        _gbare_set_jobs "${1#-j}" || return 1
+        shift
+        ;;
+      -*) shift ;;
+      *)
+        repo_names+=("$1")
+        shift
+        ;;
+    esac
+  done
+
+  if [[ ${#repo_names[@]} -eq 0 ]]; then
+    echo "Usage: gbare delete <repository-name>"
+    return 1
+  fi
+
+  local repo_name confirmation
+  for repo_name in "${repo_names[@]}"; do
+    _gbare_validate_repo_name "$repo_name" || return 1
+  done
 
   # SSH接続チェック
   if ! _gbare_check_ssh; then
     return 1
   fi
+
+  if [[ ${#repo_names[@]} -eq 1 && -z "$_GBARE_JOBS_OVERRIDE" ]]; then
+    _gbare_delete_one "${repo_names[1]}"
+    return $?
+  fi
+
+  echo "⚠️  WARNING: This will permanently delete ${#repo_names[@]} repositories from ${GBARE_HOST}:"
+  for repo_name in "${repo_names[@]}"; do
+    echo "  - ${repo_name}.git"
+  done
+  echo ""
+  echo -n "Type 'yes' to confirm: "
+  # -r and an empty IFS keep backslashes and padding, so only a bare "yes" passes.
+  IFS= read -r confirmation
+  if [[ "$confirmation" != yes ]]; then
+    echo "Cancelled"
+    return 0
+  fi
+
+  _gbare_run_parallel _gbare_delete_batch_worker "${repo_names[@]}"
+}
+
+# Confirmed batch deletion of a single repository.
+_gbare_delete_batch_worker() {
+  _gbare_delete_one "$1" "$1"
+}
+
+# Show information about one repository (worker for _gbare_info).
+# Usage: _gbare_info_one <repo_name>
+_gbare_info_one() {
+  local repo_name=$1
+
+  _gbare_validate_repo_name "$repo_name" || return 1
 
   # リポジトリ存在チェック
   local repo_status
@@ -370,26 +533,91 @@ _gbare_info() {
   fi
 }
 
-# Get the SSH URL for a repository
-# Usage: _gbare_url <repo_name>
+# Show information about one or more repositories on the remote server
+# Usage: _gbare_info <repo_name>
+#        _gbare_info [-j|--jobs N] <repo_name>...
 # Args:
-#   repo_name - Name of the repository (required)
+#   repo_name    - Name of the repository (required)
+#   -j, --jobs N - Inspect N repositories at a time
 # Returns:
-#   0 on success, 1 if repo_name is not provided
+#   0 on success, 1 if no repository is given or any lookup fails
 # Output:
-#   Echoes the SSH URL for the repository
+#   Prints repository name, server, port (if configured), SSH URL, and branches/tags
 # Example:
-#   _gbare_url myproject
-#   # => ssh://user@nas/path/myproject.git
-_gbare_url() {
-  local repo_name=$1
+#   _gbare_info myproject
+#   # => Repository: myproject.git
+#   # => Server: nas
+#   # => SSH URL: ssh://user@nas/path/myproject.git
+#   # => Branches and tags:
+_gbare_info() {
+  _GBARE_JOBS_OVERRIDE=""
+  local -a repo_names=()
 
-  if [[ -z "$repo_name" ]]; then
-    echo "Usage: gbare url <repository-name>"
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      -j|--jobs)
+        _gbare_set_jobs "$2" || return 1
+        shift 2
+        ;;
+      --jobs=*)
+        _gbare_set_jobs "${1#--jobs=}" || return 1
+        shift
+        ;;
+      -j<->)
+        _gbare_set_jobs "${1#-j}" || return 1
+        shift
+        ;;
+      -*) shift ;;
+      *)
+        repo_names+=("$1")
+        shift
+        ;;
+    esac
+  done
+
+  if [[ ${#repo_names[@]} -eq 0 ]]; then
+    echo "Usage: gbare info <repository-name>"
     return 1
   fi
 
-  _gbare_remote_url "${repo_name}"
+  # SSH接続チェック
+  if ! _gbare_check_ssh; then
+    return 1
+  fi
+
+  if [[ ${#repo_names[@]} -eq 1 && -z "$_GBARE_JOBS_OVERRIDE" ]]; then
+    _gbare_info_one "${repo_names[1]}"
+    return $?
+  fi
+
+  _gbare_run_parallel _gbare_info_one "${repo_names[@]}"
+}
+
+# Get the SSH URL for a repository
+# Usage: _gbare_url <repo_name>...
+# Args:
+#   repo_name - Name of one or more repositories (at least one required)
+# Returns:
+#   0 on success, 1 if no repository is given or any name is invalid
+# Output:
+#   Echoes the SSH URL for each repository, one per line
+# Example:
+#   _gbare_url myproject
+#   # => ssh://user@nas/path/myproject.git
+#   _gbare_url one two
+#   # => ssh://user@nas/path/one.git
+#   # => ssh://user@nas/path/two.git
+_gbare_url() {
+  if [[ $# -eq 0 ]]; then
+    echo "Usage: gbare url <repository-name>..."
+    return 1
+  fi
+
+  local repo_name rc=0
+  for repo_name in "$@"; do
+    _gbare_remote_url "${repo_name}" || rc=1
+  done
+  return $rc
 }
 
 # Add a remote to an existing local git repository
@@ -524,7 +752,18 @@ _gbare_config() {
   echo "  GBARE_COLOR: ${GBARE_COLOR}"
   echo "  GBARE_SSH_TIMEOUT: ${GBARE_SSH_TIMEOUT}s"
   echo ""
-  echo "Set these in your ~/.zshrc, Sheldon plugins.toml, or config file"
+  if _gbare_cache_enabled; then
+    echo "  GBARE_CACHE_TTL: ${GBARE_CACHE_TTL}s"
+  else
+    echo "  GBARE_CACHE_TTL: (disabled)"
+  fi
+  echo "  GBARE_CACHE_DIR: ${GBARE_CACHE_DIR}"
+  echo "  GBARE_JOBS: ${GBARE_JOBS}"
+  echo ""
+  echo "The three settings above are environment variables only; the config file"
+  echo "does not read them."
+  echo ""
+  echo "Set the server settings in your ~/.zshrc, Sheldon plugins.toml, or config file"
   echo ""
   echo "Use 'gbare profiles' to list available profiles"
 }
@@ -601,9 +840,10 @@ _gbare_sync() {
 }
 
 # Backup all repositories to local directory
-# Usage: _gbare_backup [backup_dir]
+# Usage: _gbare_backup [backup_dir] [-j|--jobs N]
 # Args:
-#   backup_dir - Directory to store backups (default: "${HOME}/gbare_backups")
+#   backup_dir   - Directory to store backups (default: "${HOME}/gbare_backups")
+#   -j, --jobs N - Mirror N repositories at a time
 # Returns:
 #   0 on success
 # Output:
@@ -611,8 +851,36 @@ _gbare_sync() {
 # Example:
 #   _gbare_backup                  # Backup to ~/gbare_backups
 #   _gbare_backup ~/my_backups     # Backup to specified directory
+#   _gbare_backup -j 4             # Mirror four repositories at a time
 _gbare_backup() {
-  local backup_dir=${1:-"${HOME}/gbare_backups"}
+  _GBARE_JOBS_OVERRIDE=""
+  local backup_dir=""
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      -j|--jobs)
+        _gbare_set_jobs "$2" || return 1
+        shift 2
+        ;;
+      --jobs=*)
+        _gbare_set_jobs "${1#--jobs=}" || return 1
+        shift
+        ;;
+      -j<->)
+        _gbare_set_jobs "${1#-j}" || return 1
+        shift
+        ;;
+      -*)
+        echo "Unknown option: $1"
+        echo "Usage: gbare backup [directory] [-j|--jobs N]"
+        return 1
+        ;;
+      *)
+        backup_dir=$1
+        shift
+        ;;
+    esac
+  done
+  backup_dir=${backup_dir:-"${HOME}/gbare_backups"}
   local timestamp=$(date +%Y%m%d_%H%M%S)
 
   echo "${GBARE_COLOR_BLUE}Creating backup of all repositories...${GBARE_COLOR_RESET}"
@@ -620,8 +888,10 @@ _gbare_backup() {
 
   mkdir -p "${backup_dir}/${timestamp}"
 
+  # A backup must be complete, so it never trusts a cached inventory: a listing
+  # taken before another client pushed would silently skip that repository.
   local repos
-  repos=$(_gbare_repository_paths)
+  repos=$(_gbare_repository_paths --refresh)
   local exit_code=$?
   if [[ $exit_code -ne 0 ]]; then
     _gbare_error "Failed to enumerate repositories for backup"
@@ -633,32 +903,41 @@ _gbare_backup() {
     return 0
   fi
 
-  local failed=0
+  _GBARE_BACKUP_DIR="${backup_dir}/${timestamp}"
+  local -a repo_names=()
+  local repo_path
   while IFS= read -r repo_path; do
-    local repo_name=$(basename "$repo_path" .git)
-    echo "${GBARE_COLOR_CYAN}Backing up: ${repo_name}${GBARE_COLOR_RESET}"
-
-    local remote_url
-    remote_url=$(_gbare_remote_url "${repo_name}") || return 1
-    local target="${backup_dir}/${timestamp}/${repo_name}"
-
-    _gbare_git clone --mirror ${remote_url} "${target}.git" 2>/dev/null
-
-    if [[ $? -eq 0 ]]; then
-      echo "${GBARE_COLOR_GREEN}  ✓ ${repo_name} backed up${GBARE_COLOR_RESET}"
-    else
-      failed=1
-      echo "${GBARE_COLOR_RED}  ✗ Failed to backup ${repo_name}${GBARE_COLOR_RESET}"
-    fi
+    repo_names+=("$(basename "$repo_path" .git)")
   done <<< "$repos"
 
+  _gbare_run_parallel _gbare_backup_one "${repo_names[@]}"
+  local failed=$?
+
   if [[ $failed -ne 0 ]]; then
-    _gbare_error "Backup incomplete: ${backup_dir}/${timestamp}"
+    _gbare_error "Backup incomplete: ${_GBARE_BACKUP_DIR}"
+    unset _GBARE_BACKUP_DIR
     return 1
   fi
 
+  unset _GBARE_BACKUP_DIR
   echo ""
   echo "${GBARE_COLOR_GREEN}✓ Backup completed: ${backup_dir}/${timestamp}${GBARE_COLOR_RESET}"
+}
+
+# Mirror one repository (worker for _gbare_backup).
+_gbare_backup_one() {
+  local repo_name=$1
+  echo "${GBARE_COLOR_CYAN}Backing up: ${repo_name}${GBARE_COLOR_RESET}"
+
+  local remote_url
+  remote_url=$(_gbare_remote_url "${repo_name}") || return 1
+
+  _gbare_git clone --mirror ${remote_url} "${_GBARE_BACKUP_DIR}/${repo_name}.git" 2>/dev/null || {
+    echo "${GBARE_COLOR_RED}  ✗ Failed to backup ${repo_name}${GBARE_COLOR_RESET}"
+    return 1
+  }
+
+  echo "${GBARE_COLOR_GREEN}  ✓ ${repo_name} backed up${GBARE_COLOR_RESET}"
 }
 
 # Search repositories by name
@@ -798,18 +1077,20 @@ gbare() {
       echo "  create, c     [name] [-y|--yes]  Create a new bare repository"
       echo "                                   (uses current directory name if not specified)"
       echo "                                   -y, --yes: Skip confirmation prompt"
-      echo "  list, ls, l                      List all repositories"
+      echo "  list, ls, l   [--refresh]        List all repositories"
+      echo "                                   --refresh: Bypass the cached listing"
       echo "  clone, cl     <name> [dir]       Clone a repository"
-      echo "  delete, rm, d <name>             Delete a repository"
-      echo "  info, i       <name>             Show repository information"
-      echo "  url, u        <name>             Get repository SSH URL"
+      echo "                -j <n> <name>...   Clone several repositories at once"
+      echo "  delete, rm, d <name>...          Delete one or more repositories"
+      echo "  info, i       <name>...          Show repository information"
+      echo "  url, u        <name>...          Get repository SSH URLs"
       echo "  remote, r     [name] [remote] [-y|--yes]"
       echo "                                   Add remote to existing local repo"
       echo "                                   (uses current directory name if not specified)"
       echo "                                   -y, --yes: Skip confirmation prompt"
       echo "  sync, s       [name] [remote]    Sync local repo with remote"
       echo "                                   (uses current directory name if not specified)"
-      echo "  backup, b     [dir]              Backup all repositories to local dir"
+      echo "  backup, b     [dir] [-j <n>]     Backup all repositories to local dir"
       echo "                                   (default: ~/gbare_backups)"
       echo "  search, se    <query>            Search repositories by name"
       echo "  config, cfg                      Show current configuration"
@@ -819,12 +1100,17 @@ gbare() {
       echo "  help, h                          Show this help"
       echo ""
       echo "Configuration (set in ~/.zshrc, Sheldon, or config file):"
-      echo "  GBARE_USER    - SSH username (default: yumenomatayume)"
-      echo "  GBARE_HOST    - Server hostname or IP (default: nas)"
-      echo "  GBARE_PORT    - SSH port (optional, defaults to 22)"
-      echo "  GBARE_PATH    - Path to git repositories (default: /volume1/homes/\${GBARE_USER}/git)"
-      echo "  GBARE_PROFILE - Active profile name (default: default)"
-      echo "  GBARE_COLOR   - Enable color output (default: true)"
+      echo "  GBARE_USER      - SSH username (default: yumenomatayume)"
+      echo "  GBARE_HOST      - Server hostname or IP (default: nas)"
+      echo "  GBARE_PORT      - SSH port (optional, defaults to 22)"
+      echo "  GBARE_PATH      - Path to git repositories (default: /volume1/homes/\${GBARE_USER}/git)"
+      echo "  GBARE_PROFILE   - Active profile name (default: default)"
+      echo "  GBARE_COLOR     - Enable color output (default: true)"
+      echo ""
+      echo "Performance (environment variables only, not read from the config file):"
+      echo "  GBARE_CACHE_TTL - Repository list cache seconds (default: 0 = disabled)"
+      echo "  GBARE_CACHE_DIR - Cache location (default: \$XDG_CACHE_HOME/gbare)"
+      echo "  GBARE_JOBS      - Parallel workers for batch commands (default: 1)"
       echo ""
       echo "Config file: ~/.config/gbare/config"
       echo "  Format: INI-style with [profile_name] sections"
@@ -835,14 +1121,17 @@ gbare() {
       echo "  gbare create myproject           # Create new repo and init local"
       echo "  gbare create myproject -y        # Create without confirmation"
       echo "  gbare list                       # List all repos on server"
+      echo "  gbare list --refresh             # List, ignoring the cache"
       echo "  gbare clone myproject            # Clone existing repo"
+      echo "  gbare clone -j 4 one two three   # Clone three repos in parallel"
+      echo "  gbare info one two               # Show info for two repos"
       echo "  gbare remote                     # Add remote with current dir name"
       echo "  gbare remote -y                  # Add remote without confirmation"
       echo "  gbare remote myproject           # Add remote to current repo"
       echo "  gbare remote myproject origin -y # Add remote without confirmation"
       echo "  gbare url myproject              # Get SSH URL"
       echo "  gbare sync                       # Sync current repo"
-      echo "  gbare backup ~/backups           # Backup all repos to ~/backups"
+      echo "  gbare backup ~/backups -j 4      # Backup all repos, four at a time"
       echo "  gbare search myproject           # Search for repos matching 'myproject'"
       echo "  gbare profiles                   # List available profiles"
       echo "  gbare profile home               # Show 'home' profile settings"

@@ -110,7 +110,236 @@ _gbare_remote_url() {
 }
 
 
+# ========================================
+# Repository list cache
+# ========================================
+
+# Caching only pays off on high-latency links, and a stale list hides remote
+# changes, so the lifetime stays short and callers can bypass it.
+_gbare_cache_enabled() {
+  [[ $GBARE_CACHE_TTL == <-> ]] && (( GBARE_CACHE_TTL > 0 ))
+}
+
+# One cache entry per server and path, so switching profiles never mixes lists.
+# The key is a fixed-length FNV-1a digest: escaping the raw fields would let a
+# long GBARE_PATH exceed the 255-byte filename limit, while hashing keeps every
+# entry the same size. Hashing in zsh avoids depending on sha256sum/shasum, and
+# the fields stay unambiguous because ":" cannot appear in the user, host or a
+# numeric port, and an unset port is spelled out instead of defaulting to 22.
+_gbare_cache_key() {
+  emulate -L zsh
+  local key="${GBARE_USER}@${GBARE_HOST}:${GBARE_PORT-<unset>}:${GBARE_PATH}"
+  local hash=-3750763034362895579  # FNV-1a 64-bit basis as a signed literal
+  local char
+  for char in ${(s::)key}; do
+    hash=$(( (hash ^ #char) * 1099511628211 ))
+  done
+  printf '%016x' $hash
+}
+
+_gbare_cache_file() {
+  print -r -- "${GBARE_CACHE_DIR}/$(_gbare_cache_key).repos"
+}
+
+# Print the cached listing when the entry is younger than GBARE_CACHE_TTL.
+# Returns 1 on a miss, which also covers a missing stat/datetime module.
+_gbare_cache_read() {
+  _gbare_cache_enabled || return 1
+
+  local file
+  file=$(_gbare_cache_file)
+  _gbare_cache_dir_is_trusted || return 1
+  [[ -f "$file" && ! -L "$file" ]] || return 1
+
+  zmodload -F zsh/stat b:zstat 2>/dev/null || return 1
+  zmodload zsh/datetime 2>/dev/null || return 1
+
+  local -a mtime
+  zstat -A mtime +mtime -- "$file" 2>/dev/null || return 1
+  (( EPOCHSECONDS - mtime[1] < GBARE_CACHE_TTL )) || return 1
+
+  cat -- "$file"
+}
+
+# Write $2 to path $1 atomically and owner-only.
+# mktemp creates the temporary file with O_EXCL, so a link planted at a
+# predictable path cannot redirect this write; umask 077 keeps the entry private
+# from the instant it exists rather than chmod-ing it after a readable window.
+_gbare_cache_write() {
+  local target=$1 data=$2 tmp
+  tmp=$(mktemp -- "${target}.XXXXXX" 2>/dev/null) || return 1
+  if (umask 077 && print -r -- "$data" >| "$tmp") 2>/dev/null; then
+    mv -f -- "$tmp" "$target" 2>/dev/null || rm -f -- "$tmp"
+  else
+    rm -f -- "$tmp"
+  fi
+  return 0
+}
+
+# The listing holds private repository names, so the directory and the entry are
+# created owner-only rather than inheriting a group/world-readable umask.
+_gbare_cache_store() {
+  _gbare_cache_enabled || return 0
+
+  local file dir
+  file=$(_gbare_cache_file)
+  dir=${file:h}
+  mkdir -p -m 700 -- "$dir" 2>/dev/null
+  _gbare_cache_dir_is_trusted || return 0
+  chmod 700 -- "$dir" 2>/dev/null
+
+  _gbare_cache_write "$file" "$1"
+  return 0
+}
+
+# A cache directory another account can write to cannot hold trusted entries:
+# anything written there may be replaced by a symlink, and following one would
+# let that account redirect our writes. Refuse to use such a directory.
+_gbare_cache_dir_is_trusted() {
+  local dir=${1:-${GBARE_CACHE_DIR}}
+  [[ -d "$dir" ]] || return 1
+  [[ -O "$dir" ]] || return 1
+  local -a perms
+  zmodload -F zsh/stat b:zstat 2>/dev/null || return 1
+  zstat -A perms +mode -- "$dir" 2>/dev/null || return 1
+  (( (perms[1] & 8#022) == 0 ))
+}
+
+# Drop the cached listing; call after any change to the remote repository set.
+# Bumping the stored generation also discards listings that were already in
+# flight, so a slow fetch cannot republish what this call just invalidated.
+_gbare_cache_invalidate() {
+  local file
+  file=$(_gbare_cache_file)
+  # A shell that mutates without caching may still share GBARE_CACHE_DIR with one
+  # that caches, so invalidate even when caching is disabled here. Nothing to
+  # discard means nothing to do, and no directory is created for a cache miss.
+  _gbare_cache_dir_is_trusted || return 0
+
+  zmodload zsh/datetime 2>/dev/null
+  _gbare_cache_write "${file}.gen" "${EPOCHSECONDS}.${RANDOM}"
+  rm -f -- "$file" 2>/dev/null
+  return 0
+}
+
 # Emit repository paths, succeeding with no output for an empty directory.
+# Usage: _gbare_repository_paths [--refresh]
+# Args:
+#   --refresh - Ignore the cached listing and re-enumerate the server
 _gbare_repository_paths() {
-  _gbare_ssh "test -d ${(qq)GBARE_PATH} && for repo in ${(qq)GBARE_PATH}/*.git; do [ -d \"\$repo\" ] || continue; printf '%s\\n' \"\$repo\"; done"
+  local use_cache=true
+  if [[ $1 == --refresh ]]; then
+    use_cache=false
+    shift
+  fi
+
+  local listing
+  if [[ $use_cache == true ]] && listing=$(_gbare_cache_read); then
+    [[ -z "$listing" ]] || print -r -- "$listing"
+    return 0
+  fi
+
+  local key file generation
+  local track_generation=false
+  key=$(_gbare_cache_key)
+  file="${GBARE_CACHE_DIR}/${key}.repos"
+
+  # Establish the generation baseline before enumerating, so a mutation that
+  # happens mid-fetch changes it and this fetch declines to publish. The marker
+  # has to exist year-round: a mutating shell may run with caching disabled and
+  # only bumps an existing marker rather than creating the directory itself.
+  # Storage failures only cost caching; the listing itself still has to work.
+  if [[ $use_cache == true ]] && _gbare_cache_enabled &&
+     mkdir -p -m 700 -- "${file:h}" 2>/dev/null; then
+    [[ -f "${file}.gen" ]] || _gbare_cache_invalidate
+    generation=$(cat -- "${file}.gen" 2>/dev/null)
+    track_generation=true
+  fi
+
+  # -H follows the configured root when it is itself a symlink, while children
+  # stay unfollowed. find is used instead of a glob because the remote shell may
+  # be zsh, where an unmatched *.git pattern is an error rather than empty.
+  # Sorting happens locally: piping to sort on the remote would make the pipeline
+  # status sort's, hiding a find failure as an empty inventory.
+  if ! listing=$(_gbare_ssh "test -d ${(qq)GBARE_PATH} && find -H ${(qq)GBARE_PATH} -mindepth 1 -maxdepth 1 -type d -name '*.git'"); then
+    return 1
+  fi
+  listing=$(print -r -- "$listing" | LC_ALL=C sort)
+
+  # Publish only if no mutation invalidated this key while the fetch ran.
+  if [[ $track_generation == true ]] &&
+     [[ "$(cat -- "${file}.gen" 2>/dev/null)" == "$generation" ]]; then
+    _gbare_cache_store "$listing"
+  fi
+
+  [[ -z "$listing" ]] || print -r -- "$listing"
+  return 0
+}
+
+# ========================================
+# Bounded parallel execution
+# ========================================
+
+# Run one command per item, at most GBARE_JOBS at a time.
+# Usage: _gbare_parallel <runner> <item>...
+# Args:
+#   runner - Function called as "<runner> <item>"; it prints its own report
+#   item   - One positional argument per invocation
+# Returns:
+#   0 when every invocation succeeded, 1 otherwise
+# Note:
+#   Concurrent runs buffer their output and replay it in item order, so reports
+#   stay readable while the work itself overlaps.
+_gbare_parallel() {
+  local runner=$1
+  shift
+  local -a items=("$@")
+  (( ${#items[@]} )) || return 0
+
+  local jobs=${GBARE_JOBS:-1}
+  [[ $jobs == <-> ]] || jobs=1
+  (( jobs >= 1 )) || jobs=1
+
+  local rc=0 item
+  if (( jobs == 1 || ${#items[@]} == 1 )); then
+    for item in "${items[@]}"; do
+      "$runner" "$item" || rc=1
+    done
+    return $rc
+  fi
+
+  local work_dir
+  work_dir=$(mktemp -d "${TMPDIR:-/tmp}/gbare-parallel.XXXXXX") || return 1
+
+  local -a pids=()
+  local index=0 code
+  for item in "${items[@]}"; do
+    index=$((index + 1))
+    if (( ${#pids[@]} >= jobs )); then
+      wait "${pids[1]}" 2>/dev/null
+      pids=("${pids[@]:1}")
+    fi
+    (
+      "$runner" "$item" >| "${work_dir}/${index}.out" 2>&1
+      print -r -- $? >| "${work_dir}/${index}.status"
+    ) &
+    pids+=($!)
+  done
+
+  local pid
+  for pid in "${pids[@]}"; do
+    wait "$pid" 2>/dev/null
+  done
+
+  index=0
+  for item in "${items[@]}"; do
+    index=$((index + 1))
+    [[ -f "${work_dir}/${index}.out" ]] && cat -- "${work_dir}/${index}.out"
+    code=''
+    [[ -f "${work_dir}/${index}.status" ]] && code=$(<"${work_dir}/${index}.status")
+    [[ "$code" == 0 ]] || rc=1
+  done
+
+  rm -rf -- "$work_dir"
+  return $rc
 }
